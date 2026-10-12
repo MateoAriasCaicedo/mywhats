@@ -20,7 +20,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { COMMANDS, isExitWord, listChats, parseCommand, resolveChat } from './src/commands.js'
+import { COMMANDS, isBackWord, isExitWord, parseCommand, resolveChat, searchContacts } from './src/commands.js'
 import { createDemoSocket, seedDemoStore } from './src/demo.js'
 import { COLORS, colored, esc, formatMessage, headerContent } from './src/format.js'
 import { downloadName, isImageFile, openWithDefaultApp, parseImageArg, playAudio, readClipboardImage } from './src/media.js'
@@ -28,11 +28,13 @@ import { findMic, startRecording } from './src/recorder.js'
 import {
   addMessage as storeMessage,
   chatName,
+  contactsWithoutChat,
   createSaver,
   ingestContacts,
   setLidMapping,
   loadStore,
   orderedChats,
+  removeChat as storeRemoveChat,
   upsertChats,
 } from './src/store.js'
 import { createUi } from './src/ui.js'
@@ -48,11 +50,12 @@ const DEMO = process.argv.includes('--demo')
 
 const store = loadStore(DEMO ? null : STORE_FILE)
 const saver = createSaver(store, DEMO ? null : STORE_FILE)
-const { screen, header, log, input, focusInput } = createUi()
+const { screen, header, log, input, focusInput, chatPage } = createUi()
 
 // ---------- state ----------
 let order = [] // chat JIDs, most recent first (what /chats numbers refer to)
 let current = null // JID of the open chat
+let highlighted = null // chat highlighted on the page when the last line was submitted (for /remove)
 let lastIncoming = null // JID of the chat that last sent you a message (for /latest)
 let sock = null // Baileys socket (or the demo stand-in)
 let connection = 'connecting' // 'connecting' | 'open' | 'close' | 'demo' | 'loggedOut'
@@ -66,7 +69,8 @@ const liveRecordings = new Set()
 let imageFor = () => undefined // demo only: bytes of images sent in demo mode
 
 const nameOf = (jid) => chatName(store, jid)
-const addMessage = (jid, m, live) => storeMessage(store, jid, m, { live, current })
+// While the chat page is open no chat is being read, so every incoming message counts as unread.
+const addMessage = (jid, m, live) => storeMessage(store, jid, m, { live, current: chatPage.isOpen ? null : current })
 
 // ---------- rendering ----------
 function renderHeader() {
@@ -118,7 +122,44 @@ screen.on('resize', () => {
 function renderList() {
   order = orderedChats(store)
   unreadChats = order.filter((jid) => store.chats[jid].unread).length
-  if (!current && order.length) return openChat(order[0]) // open the most recent chat by default
+  if (chatPage.isOpen) showChatPage()
+  else renderHeader()
+}
+
+/** Text the chat page is filtered by ('' = every chat). */
+let pageQuery = ''
+
+/**
+ * Shows the page listing chats (a dot marks the ones with new messages). With a query it lists
+ * the chats and the contacts without a chat whose name contains it; with none, it keeps the
+ * current query, so refreshes don't undo a search.
+ * @param {string} [query]
+ */
+function showChatPage(query = pageQuery) {
+  pageQuery = query
+  order = orderedChats(store)
+  unreadChats = order.filter((jid) => store.chats[jid].unread).length
+  title = pageTitle()
+  const q = query.toLowerCase()
+  const chats = q ? order.filter((jid) => nameOf(jid).toLowerCase().includes(q)) : order
+  const rows = chats.map((jid) => {
+    const unread = store.chats[jid].unread
+    const name = esc(nameOf(jid))
+    return { jid, label: unread ? `${colored(COLORS.accent, '●')} ${name} ${colored(COLORS.muted, `(${unread})`)}` : `  ${name}` }
+  })
+  if (q) for (const jid of searchContacts(query, contactsWithoutChat(store), nameOf)) rows.push({ jid, label: `  ${esc(nameOf(jid))}` })
+  chatPage.show(rows, q ? `No chat or contact matches "${query}".` : 'No chats yet.')
+  renderHeader()
+}
+
+const pageTitle = () => (pageQuery ? `Chats: ${pageQuery}` : 'Chats')
+
+/** Leaves the chat page, back to the open chat (or an empty log). */
+function closeChatPage() {
+  if (!chatPage.isOpen) return
+  chatPage.hide()
+  pageQuery = ''
+  title = current ? nameOf(current) : ''
   renderHeader()
 }
 
@@ -131,7 +172,7 @@ function appendMessage(m) {
 function renderChat() {
   log.setContent('')
   lastMessage = null
-  title = current ? nameOf(current) : ''
+  title = chatPage.isOpen ? pageTitle() : current ? nameOf(current) : ''
   if (current) for (const m of store.messages[current] || []) appendMessage(m)
   log.setScrollPerc(100)
   renderHeader()
@@ -144,6 +185,7 @@ function status(message) {
 }
 
 function openChat(jid) {
+  chatPage.hide()
   current = jid
   if (store.chats[jid]) store.chats[jid].unread = 0
   renderList()
@@ -154,17 +196,7 @@ function openChat(jid) {
 
 // ---------- commands ----------
 function showChats(arg) {
-  renderList()
-  if (!order.length) return status('No chats yet.')
-  const { rows, footer } = listChats(arg, order, nameOf)
-  if (rows.length) log.log('{bold}Chats:{/}')
-  for (const { n, jid } of rows) {
-    const unread = store.chats[jid].unread
-    const badge = unread ? ` ${colored(COLORS.accent, `(${unread} new)`)}` : ''
-    log.log(`  ${n}. ${esc(nameOf(jid))}${badge}`)
-  }
-  if (footer) log.log(colored(COLORS.muted, `  ${esc(footer)}`))
-  screen.render()
+  showChatPage(arg)
 }
 
 function showHelp() {
@@ -181,9 +213,32 @@ function openLatest() {
   openChat(jid)
 }
 
+/** Deletes a chat's saved history from this computer: the one named, else the highlighted or open chat. */
+function removeChat(query) {
+  renderList()
+  let jid
+  if (query) {
+    const result = resolveChat(query, order, nameOf)
+    if ('error' in result) return status(result.error)
+    jid = result.jid
+  } else {
+    jid = highlighted || current
+    if (!jid) return status('Usage: /remove <n|name>')
+  }
+  if (rec?.jid === jid) return status('Finish the voice note first.')
+  const name = nameOf(jid)
+  storeRemoveChat(store, jid)
+  if (jid === current) current = null
+  if (jid === lastIncoming) lastIncoming = null
+  saver.save()
+  showChatPage()
+  renderChat()
+  status(`Removed ${name}.`)
+}
+
 function openByQuery(query) {
   renderList()
-  const result = resolveChat(query, order, nameOf)
+  const result = resolveChat(query, order, nameOf, contactsWithoutChat(store))
   if ('error' in result) return status(result.error)
   openChat(result.jid)
 }
@@ -361,6 +416,7 @@ const handlers = {
   chats: showChats,
   open: openByQuery,
   latest: openLatest,
+  remove: removeChat,
   latest: openLatest,
   image: sendImage,
   paste: pasteImage,
@@ -375,6 +431,7 @@ for (const { name } of COMMANDS) if (!Object.hasOwn(handlers, name)) throw new E
 // ---------- input ----------
 input.on('cancel', () => {
   if (rec) stopVoice(false)
+  if (current) closeChatPage()
   focusInput()
 })
 
@@ -391,8 +448,14 @@ async function onSubmit(text) {
   focusInput()
   if (rec) return stopVoice(true) // Enter while recording sends the voice note
   text = (text || '').trim()
-  if (!text) return screen.render()
+  if (!text) {
+    const jid = chatPage.isOpen && chatPage.selected()
+    return jid ? openChat(jid) : screen.render()
+  }
+  highlighted = chatPage.isOpen ? chatPage.selected() : null
+  closeChatPage()
   if (isExitWord(text)) return quit()
+  if (isBackWord(text)) return showChatPage('')
 
   const command = parseCommand(text)
   if (command) {
@@ -452,7 +515,7 @@ function onUpsert({ messages, type }) {
     const jid = m.key.remoteJid
     if (!jid || jid === 'status@broadcast' || jid.endsWith('@newsletter')) continue
     const added = addMessage(jid, m, type === 'notify')
-    if (added && jid === current) {
+    if (added && jid === current && !chatPage.isOpen) {
       const history = store.messages[jid]
       appendMessage(history[history.length - 1])
     } else if (added && type === 'notify' && !m.key.fromMe) {
@@ -539,12 +602,10 @@ function startDemo() {
   imageFor = demo.imageFor
   connection = 'demo'
   renderList()
-  renderChat()
   status('Demo mode: fake chats, no WhatsApp connection. Replies are simulated.')
 }
 
-renderList()
-renderChat()
+showChatPage('')
 focusInput()
 if (DEMO) startDemo()
 else connect().catch((e) => status(`Fatal: ${e.message}`))

@@ -122,7 +122,15 @@ test('orderedChats lists the most recently active first', () => {
   store.chats.a = { name: 'a', last: 10, unread: 0 }
   store.chats.b = { name: 'b', last: 30, unread: 0 }
   store.chats.c = { name: 'c', last: 20, unread: 0 }
+  for (const jid of ['a', 'b', 'c']) store.messages[jid] = [{ id: jid }]
   assert.deepEqual(orderedChats(store), ['b', 'c', 'a'])
+})
+
+test('orderedChats leaves out chats with nothing in them', () => {
+  const store = emptyStore()
+  store.chats.empty = { name: null, last: 0, unread: 0 }
+  store.chats.unread = { name: null, last: 5, unread: 2 }
+  assert.deepEqual(orderedChats(store), ['unread'])
 })
 
 test('ingestContacts keeps address-book names apart from self-chosen ones', () => {
@@ -235,4 +243,25 @@ test('chatName finds address-book names through the LID <-> phone number mapping
   assert.equal(chatName(store, '222@lid'), 'Bob (push)')
   store.names = {}
   assert.equal(chatName(store, '222@lid'), '5799') // phone number, not the LID
+})
+
+test('contactsWithoutChat lists each contact you have no chat with once, preferring the phone JID', async () => {
+  const { contactsWithoutChat } = await import('../src/store.js')
+  const store = {
+    chats: { 'a@lid': {}, 'b@lid': {} },
+    messages: { 'a@lid': [{ id: '1' }] },
+    lids: { 'a@lid': 'a@s.whatsapp.net', 'b@lid': 'b@s.whatsapp.net' },
+    contacts: { 'a@lid': 'A', 'a@s.whatsapp.net': 'A', 'b@lid': 'B', 'b@s.whatsapp.net': 'B', 'c@s.whatsapp.net': 'C' },
+  }
+  assert.deepEqual(contactsWithoutChat(store), ['b@lid', 'c@s.whatsapp.net']) // b's empty chat entry is reused
+  assert.deepEqual(orderedChats(store), ['a@lid'])
+})
+
+test('removeChat forgets the chat and its messages', async () => {
+  const { removeChat } = await import('../src/store.js')
+  const store = emptyStore()
+  store.chats.a = { name: 'a', last: 1, unread: 0 }
+  store.messages.a = [{ id: '1' }]
+  removeChat(store, 'a')
+  assert.deepEqual([store.chats.a, store.messages.a], [undefined, undefined])
 })

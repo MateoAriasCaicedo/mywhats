@@ -66,7 +66,13 @@ test('resolveChat prefers an exact name over a longer partial match', () => {
 
 test('resolveChat reports ambiguous and unknown names', () => {
   assert.equal(resolveChat('ali', order, nameOf).error, 'Ambiguous: Alice, Alicia Keys')
-  assert.match(resolveChat('zed', order, nameOf).error, /No chat matches "zed"/)
+  assert.match(resolveChat('zed', order, nameOf).error, /No chat or contact matches "zed"/)
+})
+
+test('resolveChat also finds contacts without a chat, but numbers only count chats', () => {
+  const names = { ...NAMES, z: 'Zed Contact' }
+  assert.deepEqual(resolveChat('zed', order, (j) => names[j], ['z']), { jid: 'z' })
+  assert.match(resolveChat('5', order, (j) => names[j], ['z']).error, /No chat number 5/)
 })
 
 test('resolveChat explains usage for an empty query', () => {
@@ -88,23 +94,15 @@ test('isExitWord matches only the bare word exit, in any case', async () => {
   assert.ok(!isExitWord('exit now') && !isExitWord('please exit') && !isExitWord(''))
 })
 
-test('listChats pages the list and keeps numbers usable with /open', async () => {
-  const { listChats } = await import('../src/commands.js')
-  const order = Array.from({ length: 40 }, (_, i) => `c${i + 1}`)
-  const nameOf = (j) => `Chat ${j}`
-  const p1 = listChats('', order, nameOf, 15)
-  assert.equal(p1.rows.length, 15)
-  assert.match(p1.footer, /Page 1\/3 \(40 chats\)\. \/chats 2/)
-  const p3 = listChats('3', order, nameOf, 15)
-  assert.deepEqual(p3.rows.map((r) => r.n), [31, 32, 33, 34, 35, 36, 37, 38, 39, 40])
-  assert.equal(listChats('99', order, nameOf, 15).rows[0].n, 31) // clamped to the last page
-  assert.equal(listChats('', order.slice(0, 5), nameOf, 15).footer, '')
+test('isBackWord accepts cd and cd .. only', async () => {
+  const { isBackWord } = await import('../src/commands.js')
+  for (const ok of ['cd', 'CD', 'cd ..', 'cd   ..']) assert.equal(isBackWord(ok), true, ok)
+  for (const no of ['cd home', 'cd..', 'cdx', 'cd ...', 'go cd']) assert.equal(isBackWord(no), false, no)
 })
 
-test('listChats searches by name and reports no match', async () => {
-  const { listChats } = await import('../src/commands.js')
-  const order = ['a', 'b', 'c']
-  const nameOf = (j) => ({ a: 'Mom', b: 'Work', c: 'Mommy' })[j]
-  assert.deepEqual(listChats('MOM', order, nameOf).rows.map((r) => r.n), [1, 3])
-  assert.match(listChats('zzz', order, nameOf).footer, /No chat matches/)
+test('searchContacts matches by part of the name and sorts by name', async () => {
+  const { searchContacts } = await import('../src/commands.js')
+  const names = { a: 'Zoe Ma', b: 'Mario', c: 'Bob' }
+  assert.deepEqual(searchContacts('MA', ['a', 'b', 'c'], (j) => names[j]), ['b', 'a'])
+  assert.deepEqual(searchContacts('x', ['a'], (j) => names[j]), [])
 })

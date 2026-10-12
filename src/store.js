@@ -131,11 +131,46 @@ export function setLidMapping(store, lid, pn) {
 }
 
 /**
- * Chat JIDs, most recently active first.
+ * Address-book contacts you have no chat with yet, one JID per person (the JID of their
+ * empty chat entry if there is one, else their phone-number JID), so `/open <name>` can start a conversation with them.
+ * @param {Store} store
+ * @returns {string[]}
+ */
+export function contactsWithoutChat(store) {
+  const chatted = new Set()
+  const emptyChatFor = new Map() // phone-number JID -> JID of its empty chat entry
+  for (const jid of Object.keys(store.chats)) {
+    const pn = store.lids[jid] || jid
+    if (hasMessages(store, jid)) chatted.add(jid).add(pn)
+    else emptyChatFor.set(pn, jid)
+  }
+  const people = new Set()
+  for (const id of Object.keys(store.contacts)) {
+    const pn = store.lids[id] || id
+    if (!chatted.has(id) && !chatted.has(pn)) people.add(emptyChatFor.get(pn) || pn)
+  }
+  return [...people]
+}
+
+/** Whether a chat has anything to show: WhatsApp also lists empty entries for people you never wrote to. */
+const hasMessages = (store, jid) => (store.messages[jid]?.length ?? 0) > 0 || store.chats[jid]?.unread > 0
+
+/**
+ * Forgets a chat and its saved messages (only on this computer; WhatsApp keeps them).
+ * @param {Store} store
+ * @param {string} jid
+ */
+export function removeChat(store, jid) {
+  delete store.chats[jid]
+  delete store.messages[jid]
+}
+
+/**
+ * JIDs of the chats that have messages, most recently active first.
  * @param {Store} store
  */
 export function orderedChats(store) {
-  return Object.keys(store.chats).sort((a, b) => store.chats[b].last - store.chats[a].last)
+  return Object.keys(store.chats).filter((jid) => hasMessages(store, jid)).sort((a, b) => store.chats[b].last - store.chats[a].last)
 }
 
 /**
