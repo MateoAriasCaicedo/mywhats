@@ -351,7 +351,12 @@ async function connect() {
       title = 'Scan with WhatsApp > Linked devices'
       renderHeader()
       qrcode.generate(qr, { small: true }, (code) => {
-        log.setContent(code)
+        // The log sticks to the bottom, which would cut off the top of the QR; show it
+        // from the first line and say so if the terminal is too small to fit it whole.
+        const rows = code.split('\n').length
+        const fits = log.height - log.iheight >= rows
+        log.setContent(fits ? code : `${code}\n{bold}Terminal too small for the QR: enlarge the window to at least ${rows + 5} rows.{/}`)
+        log.scrollTo(0)
         screen.render()
       })
     }
