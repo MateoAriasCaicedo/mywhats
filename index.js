@@ -1,0 +1,411 @@
+#!/usr/bin/env node
+/**
+ * mywhats – chat on WhatsApp from the terminal.
+ *
+ * This file is the controller: it connects the WhatsApp socket (Baileys) to the screen
+ * (src/ui.js) and runs the slash commands. The logic that does not need a screen or a
+ * network (store, parsing, formatting, recording, demo) lives in src/ and is unit tested.
+ *
+ * Run with `--demo` to use fake chats without linking an account.
+ */
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  downloadMediaMessage,
+} from '@whiskeysockets/baileys'
+import pino from 'pino'
+import qrcode from 'qrcode-terminal'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { COMMANDS, parseCommand, resolveChat } from './src/commands.js'
+import { createDemoSocket, seedDemoStore } from './src/demo.js'
+import { COLORS, colored, esc, formatMessage, headerContent } from './src/format.js'
+import { downloadName, isImageFile, openWithDefaultApp, parseImageArg } from './src/media.js'
+import { findMic, startRecording } from './src/recorder.js'
+import {
+  addMessage as storeMessage,
+  chatName,
+  createSaver,
+  ingestContacts,
+  loadStore,
+  orderedChats,
+  upsertChats,
+} from './src/store.js'
+import { createUi } from './src/ui.js'
+
+const ROOT = path.dirname(fileURLToPath(import.meta.url))
+const AUTH_DIR = path.join(ROOT, 'auth')
+const STORE_FILE = path.join(ROOT, 'data', 'store.json')
+const DOWNLOADS_DIR = path.join(ROOT, 'downloads')
+const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg'
+
+/** `--demo`: fake chats, no WhatsApp connection (no QR), nothing saved to disk. */
+const DEMO = process.argv.includes('--demo')
+
+const store = loadStore(DEMO ? null : STORE_FILE)
+const saver = createSaver(store, DEMO ? null : STORE_FILE)
+const { screen, header, log, input, focusInput } = createUi()
+
+// ---------- state ----------
+let order = [] // chat JIDs, most recent first (what /chats numbers refer to)
+let current = null // JID of the open chat
+let sock = null // Baileys socket (or the demo stand-in)
+let connection = 'connecting' // 'connecting' | 'open' | 'close' | 'demo' | 'loggedOut'
+let title = '' // text on the left of the header
+let unreadChats = 0
+let lastDay = null // day label of the last message printed, to know when to print a new one
+/** Active voice recording: { jid, started (ms), recording, timer } */
+let rec = null
+/** Every ffmpeg recording not yet finished, including ones being stopped; killed on exit. */
+const liveRecordings = new Set()
+let imageFor = () => undefined // demo only: bytes of images sent in demo mode
+
+const nameOf = (jid) => chatName(store, jid)
+const addMessage = (jid, m, live) => storeMessage(store, jid, m, { live, current })
+
+// ---------- rendering ----------
+function renderHeader() {
+  header.setContent(headerContent({
+    title,
+    width: screen.width,
+    connection,
+    unreadChats,
+    recordingSeconds: rec ? (Date.now() - rec.started) / 1000 : null,
+  }))
+  screen.render()
+}
+screen.on('resize', renderHeader)
+
+/** Re-sorts the chats and refreshes the unread count in the header. */
+function renderList() {
+  order = orderedChats(store)
+  unreadChats = order.filter((jid) => store.chats[jid].unread).length
+  renderHeader()
+}
+
+function appendMessage(m) {
+  const { lines, day } = formatMessage(m, lastDay)
+  lastDay = day
+  for (const line of lines) log.log(line)
+}
+
+function renderChat() {
+  log.setContent('')
+  lastDay = null
+  title = current ? nameOf(current) : ''
+  if (current) for (const m of store.messages[current] || []) appendMessage(m)
+  log.setScrollPerc(100)
+  renderHeader()
+}
+
+/** Prints an informational line in the log. */
+function status(message) {
+  log.log(colored(COLORS.info, `* ${esc(message)}`))
+  screen.render()
+}
+
+function openChat(jid) {
+  current = jid
+  if (store.chats[jid]) store.chats[jid].unread = 0
+  renderList()
+  renderChat()
+  focusInput()
+  saver.save()
+}
+
+// ---------- commands ----------
+function showChats() {
+  renderList()
+  if (!order.length) return status('No chats yet.')
+  log.log('{bold}Chats:{/}')
+  order.forEach((jid, i) => {
+    const unread = store.chats[jid].unread
+    const badge = unread ? ` ${colored(COLORS.accent, `(${unread} new)`)}` : ''
+    log.log(`  ${i + 1}. ${esc(nameOf(jid))}${badge}`)
+  })
+  screen.render()
+}
+
+function showHelp() {
+  log.log('{bold}Commands:{/}')
+  for (const { usage, description } of COMMANDS) log.log(`  ${esc(usage.padEnd(26))}${esc(description)}`)
+  screen.render()
+}
+
+function openByQuery(query) {
+  renderList()
+  const result = resolveChat(query, order, nameOf)
+  if ('error' in result) return status(result.error)
+  openChat(result.jid)
+}
+
+/** Sends `content` to a chat and records it in the history. */
+async function sendTo(jid, content) {
+  if (!sock) return status('Not connected yet.')
+  try {
+    const sent = await sock.sendMessage(jid, content)
+    if (sent) addMessage(jid, sent, false)
+    renderList()
+    if (current === jid) renderChat()
+    saver.save()
+  } catch (e) {
+    status(`Send failed: ${e.message}`)
+  }
+}
+
+async function sendImage(arg) {
+  if (!current) return status('Open a chat first.')
+  if (!arg) return status('Usage: /image <path> [caption]')
+  const { file, caption } = parseImageArg(arg)
+  if (!isImageFile(file)) return status(`Not an image file: ${file}`)
+  let image
+  try {
+    image = fs.readFileSync(file)
+  } catch (e) {
+    return status(`Can't read ${file}: ${e.code || e.message}`)
+  }
+  await sendTo(current, caption ? { image, caption } : { image })
+}
+
+/** Downloads (in demo mode: fabricates) an image of the open chat and opens it. */
+async function viewImage(arg) {
+  if (!current) return status('Open a chat first.')
+  const n = arg === '' ? 1 : Number(arg)
+  if (!Number.isInteger(n) || n < 1) return status('Usage: /view [n]  (n = 1 for the latest image, 2 for the one before...)')
+  const images = (store.messages[current] || []).filter((m) => m.media)
+  const target = images[images.length - n]
+  if (!target) return status(n > 1 ? `Only ${images.length} image(s) in this chat.` : 'No images in this chat.')
+  try {
+    let bytes
+    if (DEMO) {
+      bytes = imageFor(target.id) || (await demoPlaceholderImage())
+    } else {
+      bytes = await downloadMediaMessage(target.media, 'buffer', {}, {
+        logger: pino({ level: 'silent' }),
+        reuploadRequest: sock.updateMediaMessage,
+      })
+    }
+    fs.mkdirSync(DOWNLOADS_DIR, { recursive: true })
+    const file = path.join(DOWNLOADS_DIR, downloadName(target.id, target.media.message.imageMessage.mimetype))
+    fs.writeFileSync(file, bytes)
+    openWithDefaultApp(file)
+    status(`Opened ${path.relative(ROOT, file)}`)
+  } catch (e) {
+    status(`Can't open this image: ${e.message}`)
+  }
+}
+
+/** A plain picture for demo mode, drawn with sharp (a peer dependency of Baileys). */
+async function demoPlaceholderImage() {
+  const { default: sharp } = await import('sharp')
+  return sharp({ create: { width: 480, height: 320, channels: 3, background: '#d4a574' } }).png().toBuffer()
+}
+
+// ---------- voice notes ----------
+function endRecording() {
+  if (!rec) return
+  clearInterval(rec.timer)
+  rec = null
+  renderHeader()
+}
+
+async function startVoice() {
+  if (rec) return status('Already recording. Enter sends, Esc cancels.')
+  if (!current) return status('Open a chat first.')
+  const r = (rec = { jid: current, started: Date.now(), recording: null, timer: null })
+  renderHeader()
+  if (!DEMO) {
+    const mic = await findMic({ ffmpeg: FFMPEG })
+    if (rec !== r) return // cancelled while looking for the microphone
+    if (mic === false) {
+      endRecording()
+      return status('ffmpeg not found. Install it (winget install Gyan.FFmpeg) and restart.')
+    }
+    if (!mic) {
+      endRecording()
+      return status('No microphone found. Set WHATSAPP_MIC to the device name.')
+    }
+    liveRecordings.add(r.recording = startRecording({
+      ffmpeg: FFMPEG,
+      mic,
+      file: path.join(os.tmpdir(), `mywhats-voice-${Date.now()}.ogg`),
+    }))
+    r.recording.onFailure((message) => {
+      liveRecordings.delete(r.recording)
+      if (rec !== r) return
+      endRecording()
+      status(`Recording failed: ${message}`)
+    })
+    r.started = Date.now()
+  }
+  r.timer = setInterval(renderHeader, 1000)
+}
+
+/** Ends the recording; sends it as a voice note if `send`, otherwise discards it. */
+async function stopVoice(send) {
+  const r = rec
+  if (!r) return
+  rec = null
+  clearInterval(r.timer)
+  renderHeader()
+  const ended = Date.now() // before waiting for ffmpeg, so shutdown time is not counted
+  if (!send) {
+    await r.recording?.cancel()
+    liveRecordings.delete(r.recording)
+    return status('Recording cancelled.')
+  }
+  if (!r.recording && !DEMO) return status('The microphone was not ready yet, nothing was sent.')
+  const audio = r.recording ? await r.recording.stop() : Buffer.from('demo')
+  liveRecordings.delete(r.recording)
+  if (!audio) return status('Recording failed (empty file).')
+  const seconds = Math.max(1, Math.round((ended - r.started) / 1000))
+  await sendTo(r.jid, { audio, ptt: true, mimetype: 'audio/ogg; codecs=opus', seconds })
+}
+
+function quit() {
+  for (const recording of liveRecordings) recording.kill()
+  saver.flush()
+  screen.destroy()
+  process.exit(0)
+}
+
+/** Command name -> handler(argument). Must cover every entry of COMMANDS. */
+const handlers = {
+  chats: showChats,
+  open: openByQuery,
+  image: sendImage,
+  view: viewImage,
+  voice: startVoice,
+  help: showHelp,
+  quit,
+}
+for (const { name } of COMMANDS) if (!Object.hasOwn(handlers, name)) throw new Error(`No handler for /${name}`)
+
+// ---------- input ----------
+input.on('cancel', () => {
+  if (rec) stopVoice(false)
+  focusInput()
+})
+
+input.on('submit', async (text) => {
+  try {
+    await onSubmit(text)
+  } catch (e) {
+    status(`Something went wrong: ${e.message}`)
+  }
+})
+
+async function onSubmit(text) {
+  input.clearValue()
+  focusInput()
+  if (rec) return stopVoice(true) // Enter while recording sends the voice note
+  text = (text || '').trim()
+  if (!text) return screen.render()
+
+  const command = parseCommand(text)
+  if (command) {
+    if (!Object.hasOwn(handlers, command.name)) return status(`Unknown command /${command.name}. Try /help.`)
+    return handlers[command.name](command.arg)
+  }
+  if (!current) return status('No chat selected. Use /chats then /open <n|name>.')
+  await sendTo(current, { text })
+}
+
+input.key(['pageup'], () => { log.scroll(-10); screen.render() })
+input.key(['pagedown'], () => { log.scroll(10); screen.render() })
+screen.key(['C-c'], quit)
+input.key(['C-c'], quit)
+
+// ---------- WhatsApp ----------
+function onUpsert({ messages, type }) {
+  for (const m of messages) {
+    const jid = m.key.remoteJid
+    if (!jid || jid === 'status@broadcast' || jid.endsWith('@newsletter')) continue
+    const added = addMessage(jid, m, type === 'notify')
+    if (added && jid === current) {
+      const history = store.messages[jid]
+      appendMessage(history[history.length - 1])
+    } else if (added && type === 'notify' && !m.key.fromMe) {
+      status(`New message from ${nameOf(jid)}`)
+    }
+  }
+  renderList()
+  saver.save()
+}
+
+async function connect() {
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
+  const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }))
+  sock = makeWASocket({
+    auth: state, version, logger: pino({ level: 'silent' }),
+    syncFullHistory: false, markOnlineOnConnect: false,
+  })
+
+  sock.ev.on('creds.update', saveCreds)
+
+  sock.ev.on('connection.update', ({ connection: next, lastDisconnect, qr }) => {
+    if (qr) {
+      title = 'Scan with WhatsApp > Linked devices'
+      renderHeader()
+      qrcode.generate(qr, { small: true }, (code) => {
+        log.setContent(code)
+        screen.render()
+      })
+    }
+    if (next) {
+      connection = next
+      renderHeader()
+    }
+    if (next === 'open') {
+      renderChat()
+      status('Connected.')
+    }
+    if (next === 'close') {
+      const code = lastDisconnect?.error?.output?.statusCode
+      if (code === DisconnectReason.loggedOut) {
+        connection = 'loggedOut'
+        renderHeader()
+        status('Logged out. Delete the "auth" folder and restart to link again.')
+      } else {
+        status('Connection lost, reconnecting...')
+        setTimeout(() => connect().catch((e) => status(`Reconnect failed: ${e.message}`)), 2000)
+      }
+    }
+  })
+
+  const update = (apply) => (items) => { apply(store, items); renderList(); saver.save() }
+  sock.ev.on('contacts.upsert', update(ingestContacts))
+  sock.ev.on('contacts.update', update(ingestContacts))
+  sock.ev.on('chats.upsert', update(upsertChats))
+
+  sock.ev.on('messaging-history.set', ({ chats, contacts, messages }) => {
+    ingestContacts(store, contacts)
+    upsertChats(store, chats)
+    for (const m of messages) if (m.key?.remoteJid) addMessage(m.key.remoteJid, m, false)
+    renderList()
+    if (current) renderChat()
+    saver.save()
+  })
+
+  sock.ev.on('messages.upsert', onUpsert)
+}
+
+function startDemo() {
+  seedDemoStore(store)
+  const demo = createDemoSocket({ store, deliver: onUpsert })
+  sock = demo.sock
+  imageFor = demo.imageFor
+  connection = 'demo'
+  renderList()
+  renderChat()
+  status('Demo mode: fake chats, no WhatsApp connection. Replies are simulated.')
+}
+
+renderList()
+renderChat()
+focusInput()
+if (DEMO) startDemo()
+else connect().catch((e) => status(`Fatal: ${e.message}`))
