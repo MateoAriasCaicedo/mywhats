@@ -595,17 +595,26 @@ async function connect() {
   sock.ev.on('messages.upsert', onUpsert)
 }
 
+/** First screen: the most recent chat, or the (empty) chat page when there are none yet. */
+function showStartScreen() {
+  order = orderedChats(store)
+  if (order.length) openChat(order[0])
+  else showChatPage('')
+}
+
 function startDemo() {
   seedDemoStore(store)
   const demo = createDemoSocket({ store, deliver: onUpsert })
   sock = demo.sock
   imageFor = demo.imageFor
   connection = 'demo'
-  renderList()
+  showStartScreen()
   status('Demo mode: fake chats, no WhatsApp connection. Replies are simulated.')
 }
 
-showChatPage('')
 focusInput()
 if (DEMO) startDemo()
-else connect().catch((e) => status(`Fatal: ${e.message}`))
+else {
+  showStartScreen()
+  connect().catch((e) => status(`Fatal: ${e.message}`))
+}
