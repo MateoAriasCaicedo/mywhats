@@ -10,6 +10,7 @@
 export const COMMANDS = Object.freeze([
   { name: 'chats', usage: '/chats [page|text]', description: 'list chats, 15 per page, or search by name' },
   { name: 'open', usage: '/open <n|name>', description: 'open a chat by number or name' },
+  { name: 'latest', usage: '/latest', description: 'open the chat that last sent you a message' },
   { name: 'image', usage: '/image <path> [caption]', description: 'send an image (quote paths with spaces)' },
   { name: 'paste', usage: '/paste [caption]', description: 'send the image on your clipboard (Ctrl+V also works)' },
   { name: 'view', usage: '/view [n]', description: 'open the latest image in this chat (n = nth latest)' },

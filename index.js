@@ -53,6 +53,7 @@ const { screen, header, log, input, focusInput } = createUi()
 // ---------- state ----------
 let order = [] // chat JIDs, most recent first (what /chats numbers refer to)
 let current = null // JID of the open chat
+let lastIncoming = null // JID of the chat that last sent you a message (for /latest)
 let sock = null // Baileys socket (or the demo stand-in)
 let connection = 'connecting' // 'connecting' | 'open' | 'close' | 'demo' | 'loggedOut'
 let title = '' // text on the left of the header
@@ -170,6 +171,14 @@ function showHelp() {
   log.log('{bold}Commands:{/}')
   for (const { usage, description } of COMMANDS) log.log(`  ${esc(usage.padEnd(26))}${esc(description)}`)
   screen.render()
+}
+
+/** Opens the chat that last sent you a message (the most recently active chat after a restart). */
+function openLatest() {
+  renderList()
+  const jid = lastIncoming && store.chats[lastIncoming] ? lastIncoming : order[0]
+  if (!jid) return status('No chats yet.')
+  openChat(jid)
 }
 
 function openByQuery(query) {
@@ -351,6 +360,8 @@ function quit() {
 const handlers = {
   chats: showChats,
   open: openByQuery,
+  latest: openLatest,
+  latest: openLatest,
   image: sendImage,
   paste: pasteImage,
   view: viewImage,
@@ -426,6 +437,10 @@ async function syncContactNames() {
     if (current) renderHeader()
   }
   if (!Object.keys(store.contacts).length) {
+    // The address book arrives only in a full snapshot. Once this collection has been synced
+    // (and its contacts not kept), WhatsApp sends just new changes, so forget the synced
+    // version to get the snapshot again.
+    await sock.authState.keys.set({ 'app-state-sync-version': { critical_unblock_low: null } })
     await withActivity('Syncing contacts…', () => sock.resyncAppState(['critical_unblock_low'], true))
   }
   renderList()
@@ -442,6 +457,10 @@ function onUpsert({ messages, type }) {
       appendMessage(history[history.length - 1])
     } else if (added && type === 'notify' && !m.key.fromMe) {
       status(`New message from ${nameOf(jid)}`)
+    }
+    if (added && type === 'notify' && !m.key.fromMe) {
+      lastIncoming = jid
+      screen.program.output.write('') // terminal bell: the terminal plays its own sound
     }
   }
   renderList()
@@ -479,7 +498,7 @@ async function connect() {
     if (next === 'open') {
       renderChat()
       status('Connected.')
-      syncContactNames().catch(() => {})
+      syncContactNames().catch((e) => status(`Couldn't sync contact names: ${e.message}`))
     }
     if (next === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
