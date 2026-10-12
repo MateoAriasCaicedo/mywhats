@@ -106,13 +106,15 @@ test('addMessage keeps the download info of images', () => {
   assert.ok(stored.media.message.imageMessage.mediaKey)
 })
 
-test('chatName prefers the chat title, then a contact name, then the number', () => {
+test('chatName prefers your address-book name, then the chat title, then the pushed name, then the number', () => {
   const store = emptyStore()
   assert.equal(chatName(store, ALICE), '111')
   store.names[ALICE] = 'Ally'
   assert.equal(chatName(store, ALICE), 'Ally')
   store.chats[ALICE] = { name: 'Alice', last: 0, unread: 0 }
   assert.equal(chatName(store, ALICE), 'Alice')
+  store.contacts[ALICE] = 'Mom'
+  assert.equal(chatName(store, ALICE), 'Mom')
 })
 
 test('orderedChats lists the most recently active first', () => {
@@ -123,7 +125,7 @@ test('orderedChats lists the most recently active first', () => {
   assert.deepEqual(orderedChats(store), ['b', 'c', 'a'])
 })
 
-test('ingestContacts uses name, then notify, then verifiedName', () => {
+test('ingestContacts keeps address-book names apart from self-chosen ones', () => {
   const store = emptyStore()
   ingestContacts(store, [
     { id: 'a', name: 'A', notify: 'x' },
@@ -131,7 +133,8 @@ test('ingestContacts uses name, then notify, then verifiedName', () => {
     { id: 'c', verifiedName: 'C' },
     { id: 'd' },
   ])
-  assert.deepEqual(store.names, { a: 'A', b: 'B', c: 'C' })
+  assert.deepEqual(store.contacts, { a: 'A' })
+  assert.deepEqual(store.names, { a: 'x', b: 'B', c: 'C' })
   assert.doesNotThrow(() => ingestContacts(store))
 })
 

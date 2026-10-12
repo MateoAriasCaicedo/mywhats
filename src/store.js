@@ -27,12 +27,13 @@ export const MAX_MESSAGES_PER_CHAT = 500
  *
  * @typedef {object} Store
  * @property {Record<string, Chat>} chats By JID.
- * @property {Record<string, string>} names Display names by JID.
+ * @property {Record<string, string>} contacts Names from your address book, by JID.
+ * @property {Record<string, string>} names Self-chosen WhatsApp names (push names), by JID; a fallback.
  * @property {Record<string, StoredMessage[]>} messages By chat JID, oldest first.
  */
 
 /** @returns {Store} */
-export const emptyStore = () => ({ chats: {}, names: {}, messages: {} })
+export const emptyStore = () => ({ chats: {}, contacts: {}, names: {}, messages: {} })
 
 /**
  * Loads the store from disk. A missing file gives an empty store; an unreadable
@@ -105,12 +106,13 @@ export function createSaver(store, file, delayMs = 500) {
 }
 
 /**
- * Best name for a chat: its title, a known contact name, or the phone number.
+ * Best name for a chat: your address-book name, its title, the name the person chose
+ * for themselves, or the phone number.
  * @param {Store} store
  * @param {string} jid
  */
 export function chatName(store, jid) {
-  return store.chats[jid]?.name || store.names[jid] || jid.split('@')[0]
+  return store.contacts[jid] || store.chats[jid]?.name || store.names[jid] || jid.split('@')[0]
 }
 
 /**
@@ -140,7 +142,7 @@ export function addMessage(store, jid, m, { live = false, current = null } = {})
   const fromMe = !!m.key.fromMe
   const sender = m.key.participant || jid
   if (!fromMe && m.pushName) store.names[sender] = m.pushName
-  const who = fromMe ? 'You' : m.pushName || store.names[sender] || sender.split('@')[0]
+  const who = fromMe ? 'You' : store.contacts[sender] || m.pushName || store.names[sender] || sender.split('@')[0]
 
   const messages = (store.messages[jid] ||= [])
   if (messages.some((x) => x.id === m.key.id)) return false
@@ -156,14 +158,16 @@ export function addMessage(store, jid, m, { live = false, current = null } = {})
 }
 
 /**
- * Records contact display names.
+ * Records contact names: `name` is from your address book and wins; `notify` and
+ * `verifiedName` are names the person (or business) chose and only fill the gaps.
  * @param {Store} store
  * @param {Array<{id: string, name?: string, notify?: string, verifiedName?: string}>} [contacts]
  */
 export function ingestContacts(store, contacts = []) {
   for (const c of contacts) {
-    const name = c.name || c.notify || c.verifiedName
-    if (name) store.names[c.id] = name
+    if (c.name) store.contacts[c.id] = c.name
+    const chosen = c.notify || c.verifiedName
+    if (chosen) store.names[c.id] = chosen
   }
 }
 
