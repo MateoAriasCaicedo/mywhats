@@ -31,7 +31,7 @@ Type in the box at the bottom and press Enter to send a message to the open chat
 
 | Command | What it does |
 | --- | --- |
-| `/chats` | List chats, most recent first, with their number |
+| `/chats [page\|text]` | List chats, most recent first, 15 per page (`/chats 2`), or search them by name (`/chats mom`). Numbers work with `/open` |
 | `/open <n\|name>` | Open a chat by number or by (part of) its name |
 | `/image <path> [caption]` | Send an image. Quote paths with spaces, or drag the file into the terminal |
 | `/paste [caption]` | Send the image on your clipboard (screenshot, copied picture). Ctrl+V / Alt+V does the same |

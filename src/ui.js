@@ -1,14 +1,15 @@
 /**
  * The terminal widgets (blessed): a header line, the message log and a bordered
- * prompt box, plus workarounds for a few blessed text-input bugs.
+ * prompt between two rules, plus workarounds for a few blessed text-input bugs.
  * @module ui
  */
 import blessed from 'blessed'
 import { suggestCommands } from './commands.js'
+import { COLORS } from './format.js'
 
 /**
  * Builds the screen and its widgets. Layout (top to bottom): header, blank line,
- * log (fills the rest), 3-line prompt box.
+ * log (fills the rest), 3-line prompt (rule, input, rule).
  * @returns {{
  *   screen: import('blessed').Widgets.Screen,
  *   header: import('blessed').Widgets.BoxElement,
@@ -27,21 +28,22 @@ export function createUi() {
     parent: screen, top: 2, left: 0, right: 0, bottom: 3, padding: { left: 1, right: 1 },
     tags: true, scrollable: true, alwaysScroll: true, mouse: true,
   })
-  // Prompt box in the style of Claude Code: bordered, gray, with a "> " prompt.
-  const box = blessed.box({
-    parent: screen, bottom: 0, left: 0, right: 0, height: 3,
-    border: 'line', style: { border: { fg: 'gray' } },
-  })
-  blessed.box({ parent: box, top: 0, left: 1, width: 1, height: 1, tags: true, content: '>' })
+  // Prompt in the style of Claude Code: a "> " line between two gray horizontal rules.
+  const box = blessed.box({ parent: screen, bottom: 0, left: 0, right: 0, height: 3 })
+  const rules = [0, 2].map((top) => blessed.box({ parent: box, top, left: 0, right: 0, height: 1, style: { fg: 'gray' } }))
+  const drawRules = () => rules.forEach((rule) => rule.setContent('─'.repeat(screen.width)))
+  drawRules()
+  screen.on('resize', drawRules)
+  blessed.box({ parent: box, top: 1, left: 1, width: 1, height: 1, tags: true, content: '>' })
   const input = blessed.textbox({
-    parent: box, top: 0, left: 3, right: 1, height: 1,
+    parent: box, top: 1, left: 3, right: 1, height: 1,
     inputOnFocus: true, keys: true, mouse: true,
   })
 
   // Slash-command menu above the prompt: filters as you type, Up/Down select, Tab completes.
   const menu = blessed.list({
     parent: screen, bottom: 3, left: 0, right: 0, height: 1, hidden: true,
-    style: { item: { fg: 'gray' }, selected: { fg: '#b4532a', bold: true } },
+    style: { item: { fg: 'gray' }, selected: { fg: COLORS.accent, bold: true } },
   })
   let suggestions = []
   const updateMenu = () => {

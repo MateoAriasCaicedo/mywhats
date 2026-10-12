@@ -6,7 +6,7 @@
 
 /** Colours (hex, readable on a light terminal). */
 export const COLORS = {
-  accent: '#b4532a',
+  accent: '#0969da',
   info: '#0550ae',
   recording: '#a40e26',
   muted: 'gray',
@@ -81,26 +81,31 @@ export function formatDuration(totalSeconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
+/** Messages from the same sender within this many seconds share one header. */
+export const GROUP_GAP_SECONDS = 5 * 60
+
 /**
- * Formats one stored message in the style of Claude Code's transcript: yours as
- * "> text", other people's as "● Name text" (coloured bullet), each with a dim time,
- * continuation lines indented under the text, and a dim rule when the day changes.
+ * Formats one stored message as a chat transcript: a header line with the sender (bold,
+ * in their colour; "You" in blue) and a dim time, then the text indented below it.
+ * Consecutive messages from the same sender close together share one header, and a dim rule marks a new day.
  * @param {{ts: number, fromMe: boolean, who: string, text: string}} m
- * @param {string|null} prevDay The day label of the previous message, if any.
+ * @param {{day: string, who: string, fromMe: boolean, ts: number}|null} prev What
+ *   the previous call returned as `state` (null for the first message of a chat).
  * @param {number} [now] Current time in ms (injectable for tests).
- * @returns {{lines: string[], day: string}}
+ * @returns {{lines: string[], state: {day: string, who: string, fromMe: boolean, ts: number}}}
  */
-export function formatMessage(m, prevDay, now = Date.now()) {
+export function formatMessage(m, prev, now = Date.now()) {
   const lines = []
   const day = dayLabel(m.ts, now)
-  if (day !== prevDay) lines.push(colored(COLORS.muted, `── ${esc(day)} ──`))
-  const time = colored(COLORS.muted, timeOf(m.ts))
-  const mark = m.fromMe ? colored(COLORS.accent, '>') : colored(colorOf(m.who), '●')
-  const name = m.fromMe ? '' : `{bold}${esc(m.who)}{/bold} `
-  const [first, ...rest] = String(m.text).split(/\r?\n/)
-  lines.push(`${mark} ${time} ${name}${esc(first)}`)
-  for (const line of rest) lines.push(`  ${esc(line)}`)
-  return { lines, day }
+  const newDay = day !== prev?.day
+  if (newDay) lines.push(colored(COLORS.muted, `── ${esc(day)} ──`))
+  const sameGroup = !newDay && prev.fromMe === m.fromMe && prev.who === m.who && m.ts - prev.ts < GROUP_GAP_SECONDS
+  if (!sameGroup) {
+    const color = m.fromMe ? COLORS.accent : colorOf(m.who)
+    lines.push(`{bold}${colored(color, esc(m.fromMe ? 'You' : m.who))}{/bold}  ${colored(COLORS.muted, timeOf(m.ts))}`)
+  }
+  for (const line of String(m.text).split(/\r?\n/)) lines.push(`  ${esc(line)}`)
+  return { lines, state: { day, who: m.who, fromMe: m.fromMe, ts: m.ts } }
 }
 
 /** Frames of the activity spinner (the ones Claude Code cycles through). */

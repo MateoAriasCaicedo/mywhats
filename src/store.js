@@ -30,11 +30,12 @@ export const MAX_MESSAGES_PER_CHAT = 500
  * @property {Record<string, Chat>} chats By JID.
  * @property {Record<string, string>} contacts Names from your address book, by JID.
  * @property {Record<string, string>} names Self-chosen WhatsApp names (push names), by JID; a fallback.
+ * @property {Record<string, string>} lids Phone-number JID of each @lid JID (WhatsApp addresses many chats by LID).
  * @property {Record<string, StoredMessage[]>} messages By chat JID, oldest first.
  */
 
 /** @returns {Store} */
-export const emptyStore = () => ({ chats: {}, contacts: {}, names: {}, messages: {} })
+export const emptyStore = () => ({ chats: {}, contacts: {}, names: {}, lids: {}, messages: {} })
 
 /**
  * Loads the store from disk. A missing file gives an empty store; an unreadable
@@ -108,12 +109,25 @@ export function createSaver(store, file, delayMs = 500) {
 
 /**
  * Best name for a chat: your address-book name, its title, the name the person chose
- * for themselves, or the phone number.
+ * for themselves, or the phone number. A chat addressed by @lid also gets the names
+ * recorded under its phone-number JID, and vice versa.
  * @param {Store} store
  * @param {string} jid
  */
 export function chatName(store, jid) {
-  return store.contacts[jid] || store.chats[jid]?.name || store.names[jid] || jid.split('@')[0]
+  const alt = store.lids[jid]
+  const pick = (table) => table[jid] || (alt && table[alt])
+  return pick(store.contacts) || store.chats[jid]?.name || pick(store.names) || (alt || jid).split('@')[0]
+}
+
+/**
+ * Remembers which phone-number JID belongs to a LID.
+ * @param {Store} store
+ * @param {string} lid
+ * @param {string} pn
+ */
+export function setLidMapping(store, lid, pn) {
+  if (lid && pn) store.lids[lid] = pn
 }
 
 /**
@@ -162,13 +176,19 @@ export function addMessage(store, jid, m, { live = false, current = null } = {})
  * Records contact names: `name` is from your address book and wins; `notify` and
  * `verifiedName` are names the person (or business) chose and only fill the gaps.
  * @param {Store} store
- * @param {Array<{id: string, name?: string, notify?: string, verifiedName?: string}>} [contacts]
+ * @param {Array<{id: string, lid?: string, phoneNumber?: string, name?: string, notify?: string, verifiedName?: string}>} [contacts]
  */
 export function ingestContacts(store, contacts = []) {
   for (const c of contacts) {
-    if (c.name) store.contacts[c.id] = c.name
+    const ids = [...new Set([c.id, c.lid, c.phoneNumber].filter(Boolean))]
+    if (c.lid && c.phoneNumber) setLidMapping(store, c.lid, c.phoneNumber)
+    else if (c.id.endsWith('@lid') && c.phoneNumber) setLidMapping(store, c.id, c.phoneNumber)
+    else if (c.lid && c.id.endsWith('@s.whatsapp.net')) setLidMapping(store, c.lid, c.id)
     const chosen = c.notify || c.verifiedName
-    if (chosen) store.names[c.id] = chosen
+    for (const id of ids) {
+      if (c.name) store.contacts[id] = c.name
+      if (chosen) store.names[id] = chosen
+    }
   }
 }
 

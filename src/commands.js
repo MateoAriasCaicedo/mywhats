@@ -8,7 +8,7 @@
  * @type {ReadonlyArray<{name: string, usage: string, description: string}>}
  */
 export const COMMANDS = Object.freeze([
-  { name: 'chats', usage: '/chats', description: 'list chats' },
+  { name: 'chats', usage: '/chats [page|text]', description: 'list chats, 15 per page, or search by name' },
   { name: 'open', usage: '/open <n|name>', description: 'open a chat by number or name' },
   { name: 'image', usage: '/image <path> [caption]', description: 'send an image (quote paths with spaces)' },
   { name: 'paste', usage: '/paste [caption]', description: 'send the image on your clipboard (Ctrl+V also works)' },
@@ -75,3 +75,31 @@ export function suggestCommands(text) {
  * @param {string} text Trimmed input.
  */
 export const isExitWord = (text) => text.toLowerCase() === 'exit'
+
+/** How many chats `/chats` lists per page. */
+export const CHATS_PAGE_SIZE = 15
+
+/**
+ * Picks the chats `/chats` shows: a page of them (argument is a page number, default 1) or
+ * the ones whose name contains the argument. Numbers are positions in `order`, so they are
+ * what `/open <n>` expects whichever page or search they came from.
+ * @param {string} arg
+ * @param {string[]} order Chat JIDs in the order `/chats` lists them.
+ * @param {(jid: string) => string} nameOf
+ * @param {number} [pageSize]
+ * @returns {{rows: Array<{n: number, jid: string}>, footer: string}}
+ */
+export function listChats(arg, order, nameOf, pageSize = CHATS_PAGE_SIZE) {
+  const all = order.map((jid, i) => ({ n: i + 1, jid }))
+  if (arg && !/^\d+$/.test(arg)) {
+    const q = arg.toLowerCase()
+    const rows = all.filter(({ jid }) => nameOf(jid).toLowerCase().includes(q))
+    return { rows, footer: rows.length ? '' : `No chat matches "${arg}".` }
+  }
+  const pages = Math.max(1, Math.ceil(all.length / pageSize))
+  const page = Math.min(Math.max(1, Number(arg) || 1), pages)
+  const rows = all.slice((page - 1) * pageSize, page * pageSize)
+  if (pages === 1) return { rows, footer: '' }
+  const next = page < pages ? ` /chats ${page + 1} for the next page.` : ''
+  return { rows, footer: `Page ${page}/${pages} (${all.length} chats).${next} /chats <text> searches by name.` }
+}

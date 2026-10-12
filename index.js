@@ -20,7 +20,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { COMMANDS, isExitWord, parseCommand, resolveChat } from './src/commands.js'
+import { COMMANDS, isExitWord, listChats, parseCommand, resolveChat } from './src/commands.js'
 import { createDemoSocket, seedDemoStore } from './src/demo.js'
 import { COLORS, colored, esc, formatMessage, headerContent } from './src/format.js'
 import { downloadName, isImageFile, openWithDefaultApp, parseImageArg, playAudio, readClipboardImage } from './src/media.js'
@@ -30,6 +30,7 @@ import {
   chatName,
   createSaver,
   ingestContacts,
+  setLidMapping,
   loadStore,
   orderedChats,
   upsertChats,
@@ -56,7 +57,7 @@ let sock = null // Baileys socket (or the demo stand-in)
 let connection = 'connecting' // 'connecting' | 'open' | 'close' | 'demo' | 'loggedOut'
 let title = '' // text on the left of the header
 let unreadChats = 0
-let lastDay = null // day label of the last message printed, to know when to print a new one
+let lastMessage = null // formatting state of the last message printed (see formatMessage)
 /** Active voice recording: { jid, started (ms), recording, timer } */
 let rec = null
 /** Every ffmpeg recording not yet finished, including ones being stopped; killed on exit. */
@@ -117,14 +118,14 @@ function renderList() {
 }
 
 function appendMessage(m) {
-  const { lines, day } = formatMessage(m, lastDay)
-  lastDay = day
+  const { lines, state } = formatMessage(m, lastMessage)
+  lastMessage = state
   for (const line of lines) log.log(line)
 }
 
 function renderChat() {
   log.setContent('')
-  lastDay = null
+  lastMessage = null
   title = current ? nameOf(current) : ''
   if (current) for (const m of store.messages[current] || []) appendMessage(m)
   log.setScrollPerc(100)
@@ -147,15 +148,17 @@ function openChat(jid) {
 }
 
 // ---------- commands ----------
-function showChats() {
+function showChats(arg) {
   renderList()
   if (!order.length) return status('No chats yet.')
-  log.log('{bold}Chats:{/}')
-  order.forEach((jid, i) => {
+  const { rows, footer } = listChats(arg, order, nameOf)
+  if (rows.length) log.log('{bold}Chats:{/}')
+  for (const { n, jid } of rows) {
     const unread = store.chats[jid].unread
     const badge = unread ? ` ${colored(COLORS.accent, `(${unread} new)`)}` : ''
-    log.log(`  ${i + 1}. ${esc(nameOf(jid))}${badge}`)
-  })
+    log.log(`  ${n}. ${esc(nameOf(jid))}${badge}`)
+  }
+  if (footer) log.log(colored(COLORS.muted, `  ${esc(footer)}`))
   screen.render()
 }
 
@@ -399,6 +402,29 @@ screen.key(['C-c'], quit)
 input.key(['C-c'], quit)
 
 // ---------- WhatsApp ----------
+/**
+ * Makes chats show the names from your address book: looks up the phone number behind
+ * each @lid chat, and, while no address-book name is known yet, asks WhatsApp to send
+ * the whole contact list again.
+ */
+async function syncContactNames() {
+  const lidMapping = sock.signalRepository?.lidMapping
+  if (lidMapping) {
+    for (const jid of Object.keys(store.chats)) {
+      if (!jid.endsWith('@lid') || store.lids[jid]) continue
+      const pn = await lidMapping.getPNForLID(jid).catch(() => null)
+      if (pn) setLidMapping(store, jid, pn.replace(/:\d+@/, '@'))
+    }
+    renderList()
+    if (current) renderHeader()
+  }
+  if (!Object.keys(store.contacts).length) {
+    await withActivity('Syncing contacts…', () => sock.resyncAppState(['critical_unblock_low'], true))
+  }
+  renderList()
+  saver.save()
+}
+
 function onUpsert({ messages, type }) {
   for (const m of messages) {
     const jid = m.key.remoteJid
@@ -446,6 +472,7 @@ async function connect() {
     if (next === 'open') {
       renderChat()
       status('Connected.')
+      syncContactNames().catch(() => {})
     }
     if (next === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
@@ -459,6 +486,8 @@ async function connect() {
       }
     }
   })
+
+  sock.ev.on('lid-mapping.update', ({ lid, pn }) => { setLidMapping(store, lid, pn); renderList(); saver.save() })
 
   const update = (apply) => (items) => { apply(store, items); renderList(); saver.save() }
   sock.ev.on('contacts.upsert', update(ingestContacts))

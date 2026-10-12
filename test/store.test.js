@@ -222,3 +222,17 @@ test('createSaver with no file does nothing', () => {
   const saver = createSaver(emptyStore(), null)
   assert.doesNotThrow(() => { saver.save(); saver.flush() })
 })
+
+test('chatName finds address-book names through the LID <-> phone number mapping', async () => {
+  const { emptyStore, chatName, ingestContacts } = await import('../src/store.js')
+  const store = emptyStore()
+  store.chats['111@lid'] = { name: null, last: 0, unread: 0 }
+  ingestContacts(store, [{ id: '5731@s.whatsapp.net', lid: '111@lid', name: 'Mom' }])
+  assert.equal(chatName(store, '111@lid'), 'Mom')
+  assert.equal(chatName(store, '5731@s.whatsapp.net'), 'Mom')
+  store.lids['222@lid'] = '5799@s.whatsapp.net'
+  store.names['5799@s.whatsapp.net'] = 'Bob (push)'
+  assert.equal(chatName(store, '222@lid'), 'Bob (push)')
+  store.names = {}
+  assert.equal(chatName(store, '222@lid'), '5799') // phone number, not the LID
+})

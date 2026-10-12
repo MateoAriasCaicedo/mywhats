@@ -47,30 +47,36 @@ test('formatDuration prints m:ss', () => {
   assert.equal(formatDuration(-3), '0:00')
 })
 
-test('formatMessage starts with a day label, then time, name and text', () => {
+test('formatMessage starts with a day rule, then a header and the indented text', () => {
   const m = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Alice', text: 'hi there' }
-  const { lines, day } = formatMessage(m, null, NOW)
-  assert.equal(day, 'Today')
-  assert.equal(lines.length, 2)
-  assert.equal(plain(lines[0]), '── Today ──')
-  assert.equal(plain(lines[1]), '● 09:30 Alice hi there')
+  const { lines, state } = formatMessage(m, null, NOW)
+  assert.equal(state.day, 'Today')
+  assert.deepEqual(lines.map(plain), ['── Today ──', 'Alice  09:30', '  hi there'])
 })
 
-test('formatMessage skips the day label when the day is unchanged', () => {
-  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Alice', text: 'hi' }
-  assert.equal(formatMessage(m, 'Today', NOW).lines.length, 1)
-})
-
-test('formatMessage shows no name for your own messages', () => {
+test('formatMessage shows "You" in blue for your own messages', () => {
   const m = { ts: at(2024, 6, 15, 9, 30), fromMe: true, who: 'You', text: 'mine' }
-  assert.equal(plain(formatMessage(m, 'Today', NOW).lines[0]), '> 09:30 mine')
+  const { lines } = formatMessage(m, { day: 'Today', who: 'Alice', fromMe: false, ts: m.ts - 10 }, NOW)
+  assert.deepEqual(lines.map(plain), ['You  09:30', '  mine'])
+  assert.ok(lines[0].includes(COLORS.accent))
 })
 
-test('formatMessage indents extra lines and escapes braces', () => {
+test('formatMessage groups close messages from the same sender under one header', () => {
+  const a = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Alice', text: 'one' }
+  const b = { ...a, ts: a.ts + 60, text: 'two' }
+  const c = { ...a, ts: a.ts + 3600, text: 'three' }
+  const first = formatMessage(a, null, NOW)
+  const second = formatMessage(b, first.state, NOW)
+  assert.deepEqual(second.lines.map(plain), ['  two'])
+  const third = formatMessage(c, second.state, NOW)
+  assert.deepEqual(third.lines.map(plain), ['Alice  10:30', '  three'])
+})
+
+test('formatMessage indents every line and escapes braces', () => {
   const m = { ts: at(2024, 6, 15, 9, 30), fromMe: true, who: 'You', text: 'a {b}\r\nsecond\nthird' }
-  const { lines } = formatMessage(m, 'Today', NOW)
+  const { lines } = formatMessage(m, { day: 'Today', who: 'You', fromMe: true, ts: m.ts - 5 }, NOW)
   assert.equal(lines.length, 3)
-  assert.match(lines[0], /a \{open\}b\{close\}$/)
+  assert.match(lines[0], /^  a \{open\}b\{close\}$/)
   assert.equal(lines[1], '  second')
   assert.equal(lines[2], '  third')
 })
