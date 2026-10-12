@@ -25,9 +25,8 @@ export function createUi() {
     parent: screen, top: 0, left: 0, right: 0, height: 1, tags: true, padding: { left: 1, right: 1 },
   })
   const log = blessed.log({
-    parent: screen, top: 2, left: 0, right: 0, bottom: 3, padding: { left: 1, right: 1 },
+    parent: screen, top: 2, left: 0, right: 0, bottom: 3,
     tags: true, scrollable: true, alwaysScroll: true,
-    scrollbar: { ch: ' ', style: { bg: 'gray' } },
   })
   // Mouse wheel scrolls the log wherever the pointer is (the widget's own wheel
   // handling only works while the pointer is over it and would double up with this).

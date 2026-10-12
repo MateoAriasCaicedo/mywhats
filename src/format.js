@@ -10,9 +10,6 @@ export const COLORS = {
   info: '#0550ae',
   recording: '#a40e26',
   muted: 'gray',
-  /** Background and text colour of your own messages (the grey band, as in Claude Code). */
-  mineBg: '#f0f0f0',
-  mineFg: '#1f2328',
 }
 
 /** Colours given to other people's names; one is picked per name. */
@@ -84,46 +81,32 @@ export function formatDuration(totalSeconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-/** Messages from the same sender within this many seconds share one header. */
-export const GROUP_GAP_SECONDS = 5 * 60
 
-/** One row of your own message: "> text" on a grey band padded to `width`. */
-function mineRow(line, first, width) {
-  const lead = first ? '> ' : '  '
-  const gap = width ? Math.max(0, width - [...lead, ...line].length) : 0
-  const arrow = first ? `{${COLORS.accent}-fg}>{/${COLORS.accent}-fg} ` : lead
-  return `{${COLORS.mineBg}-bg}{${COLORS.mineFg}-fg}${arrow}${esc(line)}${' '.repeat(gap)}{/}`
+
+/** One row of your own message: right-aligned (blessed's {right} tag), one column from the edge. */
+function mineRow(line) {
+  return `{right}${esc(line)} {/right}`
 }
 
 /**
- * Formats one stored message as a chat transcript. Other people's messages get a header
- * line (the sender's name in bold blue) with the text indented below it;
- * consecutive messages from the same sender close together share one header. Your own
- * messages are "> text" on a grey band across the screen. Times are not shown.
- * A dim rule marks a new day.
- * @param {{ts: number, fromMe: boolean, who: string, text: string}} m
- * @param {{day: string, who: string, fromMe: boolean, ts: number}|null} prev What
- *   the previous call returned as `state` (null for the first message of a chat).
+ * Formats one stored message as a chat transcript: other people's messages on the left,
+ * yours right-aligned, with no names, markers or times. Every line on the left has a
+ * one-column margin. A blank line separates your messages from theirs, and a dim rule
+ * marks a new day.
+ * @param {{ts: number, fromMe: boolean, text: string}} m
+ * @param {{day: string, fromMe: boolean}|null} prev What the previous call returned as
+ *   `state` (null for the first message of a chat).
  * @param {number} [now] Current time in ms (injectable for tests).
- * @param {number} [width] Columns the grey band of your messages spans (no padding if omitted).
- * @returns {{lines: string[], state: {day: string, who: string, fromMe: boolean, ts: number}}}
+ * @returns {{lines: string[], state: {day: string, fromMe: boolean}}}
  */
-export function formatMessage(m, prev, now = Date.now(), width = 0) {
+export function formatMessage(m, prev, now = Date.now()) {
   const lines = []
   const day = dayLabel(m.ts, now)
   const newDay = day !== prev?.day
-  if (newDay) lines.push(colored(COLORS.muted, `── ${esc(day)} ──`))
-  const rows = String(m.text).split(/\r?\n/)
-  if (m.fromMe) {
-    rows.forEach((line, i) => lines.push(mineRow(line, i === 0, width)))
-  } else {
-    const sameGroup = !newDay && prev.fromMe === m.fromMe && prev.who === m.who && m.ts - prev.ts < GROUP_GAP_SECONDS
-    if (!sameGroup) {
-      lines.push(`{bold}${colored(COLORS.accent, esc(m.who))}{/bold}`)
-    }
-    for (const line of rows) lines.push(`  ${esc(line)}`)
-  }
-  return { lines, state: { day, who: m.who, fromMe: m.fromMe, ts: m.ts } }
+  if (newDay) lines.push(colored(COLORS.muted, ` ── ${esc(day)} ──`))
+  if (!newDay && prev && prev.fromMe !== m.fromMe) lines.push('')
+  for (const line of String(m.text).split(/\r?\n/)) lines.push(m.fromMe ? mineRow(line) : ` ${esc(line)}`)
+  return { lines, state: { day, fromMe: m.fromMe } }
 }
 
 /** Frames of the activity spinner (the ones Claude Code cycles through). */

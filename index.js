@@ -113,15 +113,16 @@ screen.on('resize', () => {
   if (current) renderChat()
 })
 
-/** Re-sorts the chats and refreshes the unread count in the header. */
+/** Re-sorts the chats and refreshes the unread count in the header. Opens the first chat if none is open. */
 function renderList() {
   order = orderedChats(store)
   unreadChats = order.filter((jid) => store.chats[jid].unread).length
+  if (!current && order.length) return openChat(order[0]) // open the most recent chat by default
   renderHeader()
 }
 
 function appendMessage(m) {
-  const { lines, state } = formatMessage(m, lastMessage, Date.now(), screen.width - 4)
+  const { lines, state } = formatMessage(m, lastMessage, Date.now())
   lastMessage = state
   for (const line of lines) log.log(line)
 }
@@ -182,7 +183,10 @@ function openByQuery(query) {
 async function sendTo(jid, content) {
   if (!sock) return status('Not connected yet.')
   try {
-    const sent = await withActivity('Sending…', () => sock.sendMessage(jid, content))
+    const sent = await withActivity('Sending…', async () => {
+      await new Promise(setImmediate) // let the screen repaint and pending keystrokes be handled first
+      return sock.sendMessage(jid, content)
+    })
     if (sent) addMessage(jid, sent, false)
     renderList()
     if (current === jid) renderChat()

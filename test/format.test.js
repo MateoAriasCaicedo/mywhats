@@ -47,40 +47,31 @@ test('formatDuration prints m:ss', () => {
   assert.equal(formatDuration(-3), '0:00')
 })
 
-test('formatMessage starts with a day rule, then a header and the indented text', () => {
+test('formatMessage starts with a day rule, then the text with a margin and no name', () => {
   const m = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Alice', text: 'hi there' }
   const { lines, state } = formatMessage(m, null, NOW)
   assert.equal(state.day, 'Today')
-  assert.deepEqual(lines.map(plain), ['── Today ──', 'Alice', '  hi there'])
+  assert.deepEqual(lines.map(plain), [' ── Today ──', ' hi there'])
 })
 
-test('formatMessage draws your messages as "> text" on a grey band', () => {
-  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: true, who: 'You', text: 'mine\nmore' }
-  const { lines } = formatMessage(m, { day: 'Today', who: 'Alice', fromMe: false, ts: m.ts - 10 }, NOW, 20)
-  assert.equal(lines.length, 2)
-  assert.equal(plain(lines[0]), '> mine              ')
-  assert.equal(plain(lines[1]), '  more              ')
-  assert.ok(lines.every((l) => l.startsWith(`{${COLORS.mineBg}-bg}`)))
+test('formatMessage right-aligns your messages and separates sides with a blank line', () => {
+  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: true, who: 'You', text: 'mine'+String.fromCharCode(10)+'more' }
+  const { lines } = formatMessage(m, { day: 'Today', fromMe: false }, NOW)
+  assert.deepEqual(lines.map(plain), ['', 'mine ', 'more '])
+  assert.ok(lines[1].startsWith('{right}'))
 })
 
-test('formatMessage groups close messages from the same sender under one header', () => {
-  const a = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Alice', text: 'one' }
-  const b = { ...a, ts: a.ts + 60, text: 'two' }
-  const c = { ...a, ts: a.ts + 3600, text: 'three' }
-  const first = formatMessage(a, null, NOW)
-  const second = formatMessage(b, first.state, NOW)
-  assert.deepEqual(second.lines.map(plain), ['  two'])
-  const third = formatMessage(c, second.state, NOW)
-  assert.deepEqual(third.lines.map(plain), ['Alice', '  three'])
+test('formatMessage adds no blank line between messages from the same side', () => {
+  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Alice', text: 'two' }
+  assert.deepEqual(formatMessage(m, { day: 'Today', fromMe: false }, NOW).lines.map(plain), [' two'])
 })
 
 test('formatMessage indents every line and escapes braces', () => {
-  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Al', text: 'a {b}\r\nsecond\nthird' }
-  const { lines } = formatMessage(m, { day: 'Today', who: 'Al', fromMe: false, ts: m.ts - 5 }, NOW)
-  assert.equal(lines.length, 3)
-  assert.match(lines[0], /^  a \{open\}b\{close\}$/)
-  assert.equal(lines[1], '  second')
-  assert.equal(lines[2], '  third')
+  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Al', text: 'a {b}'+String.fromCharCode(13,10)+'second' }
+  const { lines } = formatMessage(m, { day: 'Today', fromMe: false }, NOW)
+  assert.equal(lines.length, 2)
+  assert.match(lines[0], /^ a {open}b{close}$/)
+  assert.equal(lines[1], ' second')
 })
 
 test('headerContent right-aligns status to the terminal width', () => {
