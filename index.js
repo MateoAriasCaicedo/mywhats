@@ -39,6 +39,17 @@ import {
 } from './src/store.js'
 import { createUi } from './src/ui.js'
 
+// libsignal (under Baileys) prints session bookkeeping straight to the console, key material
+// included, which garbles the screen. Drop those lines; everything else passes through.
+const SIGNAL_NOISE = /^(Closing session|Opening session|Removing old closed session|Session already (closed|open)|Migrating session)/
+for (const method of ['info', 'warn', 'log']) {
+  const original = console[method].bind(console)
+  console[method] = (...args) => {
+    if (typeof args[0] === 'string' && SIGNAL_NOISE.test(args[0])) return
+    original(...args)
+  }
+}
+
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const AUTH_DIR = path.join(ROOT, 'auth')
 const STORE_FILE = path.join(ROOT, 'data', 'store.json')
@@ -518,13 +529,8 @@ function onUpsert({ messages, type }) {
     if (added && jid === current && !chatPage.isOpen) {
       const history = store.messages[jid]
       appendMessage(history[history.length - 1])
-    } else if (added && type === 'notify' && !m.key.fromMe) {
-      status(`New message from ${nameOf(jid)}`)
     }
-    if (added && type === 'notify' && !m.key.fromMe) {
-      lastIncoming = jid
-      screen.program.output.write('') // terminal bell: the terminal plays its own sound
-    }
+    if (added && type === 'notify' && !m.key.fromMe) lastIncoming = jid
   }
   renderList()
   saver.save()
