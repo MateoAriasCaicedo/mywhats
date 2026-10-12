@@ -11,7 +11,9 @@ export const COMMANDS = Object.freeze([
   { name: 'chats', usage: '/chats', description: 'list chats' },
   { name: 'open', usage: '/open <n|name>', description: 'open a chat by number or name' },
   { name: 'image', usage: '/image <path> [caption]', description: 'send an image (quote paths with spaces)' },
+  { name: 'paste', usage: '/paste [caption]', description: 'send the image on your clipboard (Ctrl+V also works)' },
   { name: 'view', usage: '/view [n]', description: 'open the latest image in this chat (n = nth latest)' },
+  { name: 'play', usage: '/play [n]', description: 'listen to the latest voice note in this chat (n = nth latest)' },
   { name: 'voice', usage: '/voice', description: 'record a voice note (Enter sends, Esc cancels)' },
   { name: 'help', usage: '/help', description: 'show this help' },
   { name: 'quit', usage: '/quit', description: 'exit' },
@@ -53,3 +55,23 @@ export function resolveChat(query, order, nameOf) {
   if (hits.length > 1) return { error: `Ambiguous: ${hits.map(nameOf).join(', ')}` }
   return { error: `No chat matches "${query}". Try /chats.` }
 }
+
+/**
+ * Commands to suggest in the slash menu for what is typed so far.
+ * Only offered while the first word is being typed (no space yet); names that start
+ * with the text come before names that merely contain it.
+ * @param {string} text Raw input value.
+ * @returns {typeof COMMANDS[number][]}
+ */
+export function suggestCommands(text) {
+  if (!/^\/[^\s/]*$/.test(text)) return []
+  const q = text.slice(1).toLowerCase()
+  const starts = COMMANDS.filter((c) => c.name.startsWith(q))
+  return [...starts, ...COMMANDS.filter((c) => !c.name.startsWith(q) && c.name.includes(q))]
+}
+
+/**
+ * Whether the input is the bare word "exit", which quits like /quit does.
+ * @param {string} text Trimmed input.
+ */
+export const isExitWord = (text) => text.toLowerCase() === 'exit'

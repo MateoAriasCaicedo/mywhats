@@ -52,8 +52,8 @@ test('formatMessage starts with a day label, then time, name and text', () => {
   const { lines, day } = formatMessage(m, null, NOW)
   assert.equal(day, 'Today')
   assert.equal(lines.length, 2)
-  assert.equal(plain(lines[0]), 'Today')
-  assert.equal(plain(lines[1]), '09:30 Alice hi there')
+  assert.equal(plain(lines[0]), '── Today ──')
+  assert.equal(plain(lines[1]), '● 09:30 Alice hi there')
 })
 
 test('formatMessage skips the day label when the day is unchanged', () => {
@@ -63,7 +63,7 @@ test('formatMessage skips the day label when the day is unchanged', () => {
 
 test('formatMessage shows no name for your own messages', () => {
   const m = { ts: at(2024, 6, 15, 9, 30), fromMe: true, who: 'You', text: 'mine' }
-  assert.equal(plain(formatMessage(m, 'Today', NOW).lines[0]), '09:30 mine')
+  assert.equal(plain(formatMessage(m, 'Today', NOW).lines[0]), '> 09:30 mine')
 })
 
 test('formatMessage indents extra lines and escapes braces', () => {
@@ -71,8 +71,8 @@ test('formatMessage indents extra lines and escapes braces', () => {
   const { lines } = formatMessage(m, 'Today', NOW)
   assert.equal(lines.length, 3)
   assert.match(lines[0], /a \{open\}b\{close\}$/)
-  assert.equal(lines[1], '      second')
-  assert.equal(lines[2], '      third')
+  assert.equal(lines[1], '  second')
+  assert.equal(lines[2], '  third')
 })
 
 test('headerContent right-aligns status to the terminal width', () => {
@@ -96,4 +96,9 @@ test('headerContent shows the recording timer in the recording colour', () => {
 test('headerContent never overflows with a long title', () => {
   const out = plain(headerContent({ title: 'x'.repeat(100), width: 20, connection: 'demo', unreadChats: 1 }))
   assert.ok(out.endsWith('demo · 1 unread'))
+})
+
+test('headerContent shows the spinner and activity', () => {
+  const out = plain(headerContent({ title: '', width: 40, connection: 'open', unreadChats: 0, activity: 'Sending…', frame: 1 }))
+  assert.match(out, /✢ Sending…/)
 })

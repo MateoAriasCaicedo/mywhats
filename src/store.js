@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { BufferJSON } from '@whiskeysockets/baileys'
-import { imageMedia, isGroup, textOf, timestampOf } from './messages.js'
+import { audioMedia, imageMedia, isGroup, textOf, timestampOf } from './messages.js'
 
 /** Messages kept per chat (oldest are dropped). */
 export const MAX_MESSAGES_PER_CHAT = 500
@@ -24,6 +24,7 @@ export const MAX_MESSAGES_PER_CHAT = 500
  * @property {string} who Sender's display name.
  * @property {string} text Text to display (see `textOf`).
  * @property {object} [media] Download info for images (see `imageMedia`).
+ * @property {object} [audio] Download info for voice notes (see `audioMedia`).
  *
  * @typedef {object} Store
  * @property {Record<string, Chat>} chats By JID.
@@ -146,7 +147,7 @@ export function addMessage(store, jid, m, { live = false, current = null } = {})
 
   const messages = (store.messages[jid] ||= [])
   if (messages.some((x) => x.id === m.key.id)) return false
-  messages.push({ id: m.key.id, ts, fromMe, who, text, media: imageMedia(m) })
+  messages.push({ id: m.key.id, ts, fromMe, who, text, media: imageMedia(m), audio: audioMedia(m) })
   messages.sort((a, b) => a.ts - b.ts)
   if (messages.length > MAX_MESSAGES_PER_CHAT) messages.splice(0, messages.length - MAX_MESSAGES_PER_CHAT)
 

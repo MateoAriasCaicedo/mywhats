@@ -72,3 +72,18 @@ test('resolveChat reports ambiguous and unknown names', () => {
 test('resolveChat explains usage for an empty query', () => {
   assert.match(resolveChat('', order, nameOf).error, /Usage/)
 })
+
+test('suggestCommands lists prefix matches first and only while typing the first word', async () => {
+  const { suggestCommands } = await import('../src/commands.js')
+  assert.equal(suggestCommands('/').length, COMMANDS.length)
+  assert.deepEqual(suggestCommands('/vi').map((c) => c.name), ['view'])
+  assert.equal(suggestCommands('/image foo').length, 0)
+  assert.equal(suggestCommands('hello').length, 0)
+  assert.equal(suggestCommands('/zzz').length, 0)
+})
+
+test('isExitWord matches only the bare word exit, in any case', async () => {
+  const { isExitWord } = await import('../src/commands.js')
+  assert.ok(isExitWord('exit') && isExitWord('EXIT') && isExitWord('Exit'))
+  assert.ok(!isExitWord('exit now') && !isExitWord('please exit') && !isExitWord(''))
+})

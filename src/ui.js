@@ -4,6 +4,7 @@
  * @module ui
  */
 import blessed from 'blessed'
+import { suggestCommands } from './commands.js'
 
 /**
  * Builds the screen and its widgets. Layout (top to bottom): header, blank line,
@@ -37,6 +38,32 @@ export function createUi() {
     inputOnFocus: true, keys: true, mouse: true,
   })
 
+  // Slash-command menu above the prompt: filters as you type, Up/Down select, Tab completes.
+  const menu = blessed.list({
+    parent: screen, bottom: 3, left: 0, right: 0, height: 1, hidden: true,
+    style: { item: { fg: 'gray' }, selected: { fg: '#b4532a', bold: true } },
+  })
+  let suggestions = []
+  const updateMenu = () => {
+    suggestions = suggestCommands(input.value)
+    if (!suggestions.length) {
+      if (!menu.hidden) { menu.hide(); screen.render() }
+      return
+    }
+    const width = Math.max(...suggestions.map((c) => c.usage.length)) + 2
+    const previous = menu.selected || 0
+    menu.setItems(suggestions.map((c) => `  ${c.usage.padEnd(width)}${c.description}`))
+    menu.height = suggestions.length
+    menu.select(Math.min(previous, suggestions.length - 1))
+    menu.show()
+    screen.render()
+  }
+  const complete = () => {
+    const { name } = suggestions[menu.selected]
+    input.setValue(`/${name} `)
+    updateMenu()
+  }
+
   // blessed can leak a duplicate keypress listener on the textbox when focus changes
   // right after a read starts, which makes every typed character repeat. All the
   // duplicates receive the same key object for one keypress, so handle each only once.
@@ -45,7 +72,19 @@ export function createUi() {
   input._listener = function (ch, key) {
     if (key && key === lastKey) return
     lastKey = key
-    return baseListener.call(this, ch, key)
+    if (suggestions.length && key) {
+      if (key.name === 'up' || key.name === 'down') {
+        const n = suggestions.length
+        menu.select((menu.selected + (key.name === 'down' ? 1 : n - 1)) % n)
+        return screen.render()
+      }
+      if (key.name === 'tab') return complete()
+      // Enter on a partial command completes it; on a full command name it sends.
+      if (key.name === 'enter' && suggestions[menu.selected].name !== this.value.slice(1).toLowerCase()) return complete()
+    }
+    const result = baseListener.call(this, ch, key)
+    updateMenu()
+    return result
   }
 
   // blessed moves the cursor with relative moves from a tracked position, which drifts
@@ -65,6 +104,10 @@ export function createUi() {
   const focusInput = () => {
     if (!input._reading) input.focus()
   }
+
+  // Submitting or cancelling clears the box without a keypress, so close the menu then too.
+  input.on('submit', updateMenu)
+  input.on('cancel', updateMenu)
 
   return { screen, header, log, input, focusInput }
 }

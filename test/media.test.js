@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
-  downloadName, extensionFor, isImageFile, openCommand, openWithDefaultApp, parseImageArg,
+  downloadName, extensionFor, isImageFile, openCommand, openWithDefaultApp, parseImageArg, playAudio, readClipboardImage,
 } from '../src/media.js'
 
 test('isImageFile accepts common image extensions in any case', () => {
@@ -73,4 +73,38 @@ test('openWithDefaultApp starts the opener detached and does not wait for it', (
   assert.equal(calls[0].args.at(-1), 'a.png')
   assert.equal(calls[0].options.detached, true)
   assert.equal(unreffed, true)
+})
+
+test('readClipboardImage decodes the base64 output on Windows', async () => {
+  const png = Buffer.from([1, 2, 3, 4])
+  const exec = (cmd, args, opts, cb) => cb(null, Buffer.from(png.toString('base64')))
+  assert.deepEqual(await readClipboardImage(exec, 'win32'), png)
+})
+
+test('readClipboardImage falls back to the next tool and reports a missing image', async () => {
+  const png = Buffer.from([9, 8])
+  const exec = (cmd, args, opts, cb) =>
+    cmd === 'wl-paste' ? cb(Object.assign(new Error('x'), { code: 'ENOENT' })) : cb(null, png)
+  assert.deepEqual(await readClipboardImage(exec, 'linux'), png)
+  await assert.rejects(readClipboardImage((c, a, o, cb) => cb(new Error('empty')), 'win32'), /No image on the clipboard/)
+})
+
+test('extensionFor handles audio mimetypes with parameters', () => {
+  assert.equal(extensionFor('audio/ogg; codecs=opus'), 'ogg')
+  assert.equal(extensionFor('audio/mpeg'), 'mp3')
+})
+
+test('playAudio uses ffplay and falls back to the default app when it is missing', async () => {
+  const calls = []
+  const spawnImpl = (cmd) => {
+    calls.push(cmd)
+    const handlers = {}
+    const proc = { on: (e, f) => { handlers[e] = f; return proc }, unref() {} }
+    if (cmd === 'ffplay') queueMicrotask(() => handlers.error?.(new Error('ENOENT')))
+    return proc
+  }
+  playAudio('a.ogg', spawnImpl)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(calls[0], 'ffplay')
+  assert.equal(calls.length, 2)
 })

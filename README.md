@@ -34,10 +34,12 @@ Type in the box at the bottom and press Enter to send a message to the open chat
 | `/chats` | List chats, most recent first, with their number |
 | `/open <n\|name>` | Open a chat by number or by (part of) its name |
 | `/image <path> [caption]` | Send an image. Quote paths with spaces, or drag the file into the terminal |
+| `/paste [caption]` | Send the image on your clipboard (screenshot, copied picture). Ctrl+V / Alt+V does the same |
 | `/view [n]` | Open the latest image of the chat in your default viewer (`n` = nth latest) |
+| `/play [n]` | Listen to the latest voice note of the chat (`n` = nth latest). Uses ffplay if installed, else your default audio app |
 | `/voice` | Record a voice note: Enter sends it, Esc cancels |
 | `/help` | Show the commands |
-| `/quit` | Exit (Ctrl-C also works) |
+| `/quit` | Exit. Typing just `exit` or pressing Ctrl-C also works (so you cannot send a message that is only "exit") |
 
 PageUp / PageDown scroll the conversation. An unknown command such as `/foo` shows an error instead of being sent as a message.
 

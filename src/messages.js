@@ -44,6 +44,17 @@ export function imageMedia(m) {
 }
 
 /**
+ * What is needed to download a voice note / audio message later (`downloadMediaMessage`).
+ * @param {{key: object, message?: object|null}} m A Baileys message.
+ * @returns {{key: object, message: {audioMessage: object}}|undefined} undefined if it is not audio.
+ */
+export function audioMedia(m) {
+  const audio = normalizeMessageContent(m.message)?.audioMessage
+  if (!audio) return undefined
+  return { key: m.key, message: { audioMessage: audio } }
+}
+
+/**
  * Message timestamp in Unix seconds. Baileys may give a number, a numeric string or a
  * protobuf `Long` ({low, high}); falls back to `now` when missing.
  * @param {{messageTimestamp?: unknown}} m

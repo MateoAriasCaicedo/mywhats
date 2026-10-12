@@ -20,10 +20,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { COMMANDS, parseCommand, resolveChat } from './src/commands.js'
+import { COMMANDS, isExitWord, parseCommand, resolveChat } from './src/commands.js'
 import { createDemoSocket, seedDemoStore } from './src/demo.js'
 import { COLORS, colored, esc, formatMessage, headerContent } from './src/format.js'
-import { downloadName, isImageFile, openWithDefaultApp, parseImageArg } from './src/media.js'
+import { downloadName, isImageFile, openWithDefaultApp, parseImageArg, playAudio, readClipboardImage } from './src/media.js'
 import { findMic, startRecording } from './src/recorder.js'
 import {
   addMessage as storeMessage,
@@ -74,8 +74,38 @@ function renderHeader() {
     connection,
     unreadChats,
     recordingSeconds: rec ? (Date.now() - rec.started) / 1000 : null,
+    activity: currentActivity(),
+    frame: spinnerFrame,
   }))
   screen.render()
+}
+
+/** Labels of the operations in progress; the newest is shown in the header with a spinner. */
+const activities = []
+let spinnerFrame = 0
+setInterval(() => {
+  if (!currentActivity()) return
+  spinnerFrame++
+  renderHeader()
+}, 120).unref()
+
+function currentActivity() {
+  if (activities.length) return activities[activities.length - 1]
+  if (connection === 'connecting') return 'Connecting…'
+  if (connection === 'close') return 'Reconnecting…'
+  return null
+}
+
+/** Runs `task` while showing `label` with a spinner in the header. */
+async function withActivity(label, task) {
+  activities.push(label)
+  renderHeader()
+  try {
+    return await task()
+  } finally {
+    activities.splice(activities.indexOf(label), 1)
+    renderHeader()
+  }
 }
 screen.on('resize', renderHeader)
 
@@ -146,7 +176,7 @@ function openByQuery(query) {
 async function sendTo(jid, content) {
   if (!sock) return status('Not connected yet.')
   try {
-    const sent = await sock.sendMessage(jid, content)
+    const sent = await withActivity('Sending…', () => sock.sendMessage(jid, content))
     if (sent) addMessage(jid, sent, false)
     renderList()
     if (current === jid) renderChat()
@@ -170,6 +200,18 @@ async function sendImage(arg) {
   await sendTo(current, caption ? { image, caption } : { image })
 }
 
+/** Sends the image currently on the clipboard; the argument is an optional caption. */
+async function pasteImage(caption) {
+  if (!current) return status('Open a chat first.')
+  let image
+  try {
+    image = await readClipboardImage()
+  } catch (e) {
+    return status(e.message)
+  }
+  await sendTo(current, caption ? { image, caption } : { image })
+}
+
 /** Downloads (in demo mode: fabricates) an image of the open chat and opens it. */
 async function viewImage(arg) {
   if (!current) return status('Open a chat first.')
@@ -180,14 +222,13 @@ async function viewImage(arg) {
   if (!target) return status(n > 1 ? `Only ${images.length} image(s) in this chat.` : 'No images in this chat.')
   try {
     let bytes
-    if (DEMO) {
-      bytes = imageFor(target.id) || (await demoPlaceholderImage())
-    } else {
-      bytes = await downloadMediaMessage(target.media, 'buffer', {}, {
+    bytes = await withActivity('Downloading…', async () => {
+      if (DEMO) return imageFor(target.id) || (await demoPlaceholderImage())
+      return downloadMediaMessage(target.media, 'buffer', {}, {
         logger: pino({ level: 'silent' }),
         reuploadRequest: sock.updateMediaMessage,
       })
-    }
+    })
     fs.mkdirSync(DOWNLOADS_DIR, { recursive: true })
     const file = path.join(DOWNLOADS_DIR, downloadName(target.id, target.media.message.imageMessage.mimetype))
     fs.writeFileSync(file, bytes)
@@ -195,6 +236,30 @@ async function viewImage(arg) {
     status(`Opened ${path.relative(ROOT, file)}`)
   } catch (e) {
     status(`Can't open this image: ${e.message}`)
+  }
+}
+
+/** Downloads a voice note of the open chat and plays it. */
+async function playVoice(arg) {
+  if (!current) return status('Open a chat first.')
+  const n = arg === '' ? 1 : Number(arg)
+  if (!Number.isInteger(n) || n < 1) return status('Usage: /play [n]  (n = 1 for the latest voice note, 2 for the one before...)')
+  const notes = (store.messages[current] || []).filter((m) => m.audio)
+  const target = notes[notes.length - n]
+  if (!target) return status(n > 1 ? `Only ${notes.length} voice note(s) in this chat.` : 'No playable voice notes in this chat.')
+  if (DEMO) return status('Voice playback is not available in demo mode.')
+  try {
+    const bytes = await withActivity('Downloading…', () => downloadMediaMessage(target.audio, 'buffer', {}, {
+      logger: pino({ level: 'silent' }),
+      reuploadRequest: sock.updateMediaMessage,
+    }))
+    fs.mkdirSync(DOWNLOADS_DIR, { recursive: true })
+    const file = path.join(DOWNLOADS_DIR, downloadName(target.id, target.audio.message.audioMessage.mimetype))
+    fs.writeFileSync(file, bytes)
+    playAudio(file)
+    status(`Playing ${path.relative(ROOT, file)}`)
+  } catch (e) {
+    status(`Can't play this voice note: ${e.message}`)
   }
 }
 
@@ -277,7 +342,9 @@ const handlers = {
   chats: showChats,
   open: openByQuery,
   image: sendImage,
+  paste: pasteImage,
   view: viewImage,
+  play: playVoice,
   voice: startVoice,
   help: showHelp,
   quit,
@@ -304,6 +371,7 @@ async function onSubmit(text) {
   if (rec) return stopVoice(true) // Enter while recording sends the voice note
   text = (text || '').trim()
   if (!text) return screen.render()
+  if (isExitWord(text)) return quit()
 
   const command = parseCommand(text)
   if (command) {
@@ -313,6 +381,17 @@ async function onSubmit(text) {
   if (!current) return status('No chat selected. Use /chats then /open <n|name>.')
   await sendTo(current, { text })
 }
+
+// Ctrl+V / Alt+V: when the clipboard holds an image, send it (text is pasted by the terminal itself)
+input.key(['C-v', 'M-v'], async () => {
+  const caption = input.getValue().trim()
+  input.clearValue()
+  try {
+    await pasteImage(caption)
+  } catch (e) {
+    status(`Something went wrong: ${e.message}`)
+  }
+})
 
 input.key(['pageup'], () => { log.scroll(-10); screen.render() })
 input.key(['pagedown'], () => { log.scroll(10); screen.render() })

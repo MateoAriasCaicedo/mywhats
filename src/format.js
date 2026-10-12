@@ -82,8 +82,9 @@ export function formatDuration(totalSeconds) {
 }
 
 /**
- * Formats one stored message as log lines: a dim day label when the day changes,
- * then "time [name] text" (your own messages have no name), with extra text lines indented.
+ * Formats one stored message in the style of Claude Code's transcript: yours as
+ * "> text", other people's as "● Name text" (coloured bullet), each with a dim time,
+ * continuation lines indented under the text, and a dim rule when the day changes.
  * @param {{ts: number, fromMe: boolean, who: string, text: string}} m
  * @param {string|null} prevDay The day label of the previous message, if any.
  * @param {number} [now] Current time in ms (injectable for tests).
@@ -92,13 +93,18 @@ export function formatDuration(totalSeconds) {
 export function formatMessage(m, prevDay, now = Date.now()) {
   const lines = []
   const day = dayLabel(m.ts, now)
-  if (day !== prevDay) lines.push(colored(COLORS.muted, esc(day)))
-  const name = m.fromMe ? '' : `${colored(colorOf(m.who), esc(m.who))} `
+  if (day !== prevDay) lines.push(colored(COLORS.muted, `── ${esc(day)} ──`))
+  const time = colored(COLORS.muted, timeOf(m.ts))
+  const mark = m.fromMe ? colored(COLORS.accent, '>') : colored(colorOf(m.who), '●')
+  const name = m.fromMe ? '' : `{bold}${esc(m.who)}{/bold} `
   const [first, ...rest] = String(m.text).split(/\r?\n/)
-  lines.push(`${colored(COLORS.muted, timeOf(m.ts))} ${name}${esc(first)}`)
-  for (const line of rest) lines.push(`      ${esc(line)}`)
+  lines.push(`${mark} ${time} ${name}${esc(first)}`)
+  for (const line of rest) lines.push(`  ${esc(line)}`)
   return { lines, day }
 }
+
+/** Frames of the activity spinner (the ones Claude Code cycles through). */
+export const SPINNER_FRAMES = ['·', '✢', '✳', '✶', '✻', '✽']
 
 /**
  * Content of the one-line header: the chat title on the left, status on the right
@@ -109,11 +115,14 @@ export function formatMessage(m, prevDay, now = Date.now()) {
  * @param {string} p.connection Key of {@link CONNECTION_LABELS} (or any literal label).
  * @param {number} p.unreadChats Number of chats with unread messages.
  * @param {number|null} [p.recordingSeconds] Seconds recorded so far, or null when idle.
+ * @param {string|null} [p.activity] What the app is busy with ("Sending…"), shown with a spinner.
+ * @param {number} [p.frame] Spinner animation step.
  */
-export function headerContent({ title, width, connection, unreadChats, recordingSeconds = null }) {
+export function headerContent({ title, width, connection, unreadChats, recordingSeconds = null, activity = null, frame = 0 }) {
   /** @type {Array<[string, string]>} */
   const parts = []
   if (recordingSeconds != null) parts.push([`● rec ${formatDuration(recordingSeconds)}`, COLORS.recording])
+  if (activity) parts.push([`${SPINNER_FRAMES[frame % SPINNER_FRAMES.length]} ${activity}`, COLORS.accent])
   const label = CONNECTION_LABELS[connection] ?? connection
   if (label) parts.push([label, COLORS.muted])
   if (unreadChats) parts.push([`${unreadChats} unread`, COLORS.info])
