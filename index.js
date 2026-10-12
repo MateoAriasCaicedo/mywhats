@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * mywhats – chat on WhatsApp from the terminal.
+ * whats – chat on WhatsApp from the terminal.
  *
  * This file is the controller: it connects the WhatsApp socket (Baileys) to the screen
  * (src/ui.js) and runs the slash commands. The logic that does not need a screen or a
@@ -306,7 +306,7 @@ async function startVoice() {
     liveRecordings.add(r.recording = startRecording({
       ffmpeg: FFMPEG,
       mic,
-      file: path.join(os.tmpdir(), `mywhats-voice-${Date.now()}.ogg`),
+      file: path.join(os.tmpdir(), `whats-voice-${Date.now()}.ogg`),
     }))
     r.recording.onFailure((message) => {
       liveRecordings.delete(r.recording)

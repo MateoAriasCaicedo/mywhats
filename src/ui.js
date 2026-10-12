@@ -1,6 +1,6 @@
 /**
- * The terminal widgets (blessed): a header line, the message log and a bordered
- * prompt between two rules, plus workarounds for a few blessed text-input bugs.
+ * The terminal widgets (blessed): a header line, the message log and a
+ * single-line prompt, plus workarounds for a few blessed text-input bugs.
  * @module ui
  */
 import blessed from 'blessed'
@@ -9,7 +9,7 @@ import { COLORS } from './format.js'
 
 /**
  * Builds the screen and its widgets. Layout (top to bottom): header, blank line,
- * log (fills the rest), 3-line prompt (rule, input, rule).
+ * log (fills the rest), 1-line prompt.
  * @returns {{
  *   screen: import('blessed').Widgets.Screen,
  *   header: import('blessed').Widgets.BoxElement,
@@ -19,13 +19,13 @@ import { COLORS } from './format.js'
  * }}
  */
 export function createUi() {
-  const screen = blessed.screen({ smartCSR: true, title: 'mywhats', fullUnicode: true })
+  const screen = blessed.screen({ smartCSR: true, title: 'whats', fullUnicode: true })
 
   const header = blessed.box({
     parent: screen, top: 0, left: 0, right: 0, height: 1, tags: true, padding: { left: 1, right: 1 },
   })
   const log = blessed.log({
-    parent: screen, top: 2, left: 0, right: 0, bottom: 3,
+    parent: screen, top: 2, left: 0, right: 0, bottom: 1,
     tags: true, scrollable: true, alwaysScroll: true,
   })
   // Mouse wheel scrolls the log wherever the pointer is (the widget's own wheel
@@ -36,21 +36,17 @@ export function createUi() {
     log.scroll(data.action === 'wheelup' ? -WHEEL_LINES : WHEEL_LINES)
     screen.render()
   })
-  // Prompt in the style of Claude Code: a "> " line between two gray horizontal rules.
-  const box = blessed.box({ parent: screen, bottom: 0, left: 0, right: 0, height: 3 })
-  const rules = [0, 2].map((top) => blessed.box({ parent: box, top, left: 0, right: 0, height: 1, style: { fg: 'gray' } }))
-  const drawRules = () => rules.forEach((rule) => rule.setContent('─'.repeat(screen.width)))
-  drawRules()
-  screen.on('resize', drawRules)
-  blessed.box({ parent: box, top: 1, left: 1, width: 1, height: 1, tags: true, content: '>' })
+  // Prompt in the style of Claude Code: a plain "> " line.
+  const box = blessed.box({ parent: screen, bottom: 0, left: 0, right: 0, height: 1 })
+  blessed.box({ parent: box, top: 0, left: 1, width: 1, height: 1, tags: true, content: '>' })
   const input = blessed.textbox({
-    parent: box, top: 1, left: 3, right: 1, height: 1,
+    parent: box, top: 0, left: 3, right: 1, height: 1,
     inputOnFocus: true, keys: true, mouse: true,
   })
 
   // Slash-command menu above the prompt: filters as you type, Up/Down select, Tab completes.
   const menu = blessed.list({
-    parent: screen, bottom: 3, left: 0, right: 0, height: 1, hidden: true,
+    parent: screen, bottom: 1, left: 0, right: 0, height: 1, hidden: true,
     style: { item: { fg: 'gray' }, selected: { fg: COLORS.accent, bold: true } },
   })
   let suggestions = []
