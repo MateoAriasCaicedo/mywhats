@@ -51,14 +51,16 @@ test('formatMessage starts with a day rule, then a header and the indented text'
   const m = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Alice', text: 'hi there' }
   const { lines, state } = formatMessage(m, null, NOW)
   assert.equal(state.day, 'Today')
-  assert.deepEqual(lines.map(plain), ['── Today ──', 'Alice  09:30', '  hi there'])
+  assert.deepEqual(lines.map(plain), ['── Today ──', 'Alice', '  hi there'])
 })
 
-test('formatMessage shows "You" in blue for your own messages', () => {
-  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: true, who: 'You', text: 'mine' }
-  const { lines } = formatMessage(m, { day: 'Today', who: 'Alice', fromMe: false, ts: m.ts - 10 }, NOW)
-  assert.deepEqual(lines.map(plain), ['You  09:30', '  mine'])
-  assert.ok(lines[0].includes(COLORS.accent))
+test('formatMessage draws your messages as "> text" on a grey band', () => {
+  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: true, who: 'You', text: 'mine\nmore' }
+  const { lines } = formatMessage(m, { day: 'Today', who: 'Alice', fromMe: false, ts: m.ts - 10 }, NOW, 20)
+  assert.equal(lines.length, 2)
+  assert.equal(plain(lines[0]), '> mine              ')
+  assert.equal(plain(lines[1]), '  more              ')
+  assert.ok(lines.every((l) => l.startsWith(`{${COLORS.mineBg}-bg}`)))
 })
 
 test('formatMessage groups close messages from the same sender under one header', () => {
@@ -69,12 +71,12 @@ test('formatMessage groups close messages from the same sender under one header'
   const second = formatMessage(b, first.state, NOW)
   assert.deepEqual(second.lines.map(plain), ['  two'])
   const third = formatMessage(c, second.state, NOW)
-  assert.deepEqual(third.lines.map(plain), ['Alice  10:30', '  three'])
+  assert.deepEqual(third.lines.map(plain), ['Alice', '  three'])
 })
 
 test('formatMessage indents every line and escapes braces', () => {
-  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: true, who: 'You', text: 'a {b}\r\nsecond\nthird' }
-  const { lines } = formatMessage(m, { day: 'Today', who: 'You', fromMe: true, ts: m.ts - 5 }, NOW)
+  const m = { ts: at(2024, 6, 15, 9, 30), fromMe: false, who: 'Al', text: 'a {b}\r\nsecond\nthird' }
+  const { lines } = formatMessage(m, { day: 'Today', who: 'Al', fromMe: false, ts: m.ts - 5 }, NOW)
   assert.equal(lines.length, 3)
   assert.match(lines[0], /^  a \{open\}b\{close\}$/)
   assert.equal(lines[1], '  second')

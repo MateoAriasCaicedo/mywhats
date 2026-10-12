@@ -108,7 +108,10 @@ async function withActivity(label, task) {
     renderHeader()
   }
 }
-screen.on('resize', renderHeader)
+screen.on('resize', () => {
+  renderHeader()
+  if (current) renderChat()
+})
 
 /** Re-sorts the chats and refreshes the unread count in the header. */
 function renderList() {
@@ -118,7 +121,7 @@ function renderList() {
 }
 
 function appendMessage(m) {
-  const { lines, state } = formatMessage(m, lastMessage)
+  const { lines, state } = formatMessage(m, lastMessage, Date.now(), screen.width - 4)
   lastMessage = state
   for (const line of lines) log.log(line)
 }

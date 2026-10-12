@@ -41,7 +41,7 @@ Type in the box at the bottom and press Enter to send a message to the open chat
 | `/help` | Show the commands |
 | `/quit` | Exit. Typing just `exit` or pressing Ctrl-C also works (so you cannot send a message that is only "exit") |
 
-PageUp / PageDown scroll the conversation. An unknown command such as `/foo` shows an error instead of being sent as a message.
+Scroll the conversation with the mouse wheel, PageUp / PageDown, or the Up / Down arrow keys (Up / Down pick an entry instead while the `/` menu is open). An unknown command such as `/foo` shows an error instead of being sent as a message.
 
 Images are saved to `downloads/`. `/view` only works for images received after this feature was added, because the app needs to remember how to download each one when it arrives.
 

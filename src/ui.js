@@ -26,7 +26,16 @@ export function createUi() {
   })
   const log = blessed.log({
     parent: screen, top: 2, left: 0, right: 0, bottom: 3, padding: { left: 1, right: 1 },
-    tags: true, scrollable: true, alwaysScroll: true, mouse: true,
+    tags: true, scrollable: true, alwaysScroll: true,
+    scrollbar: { ch: ' ', style: { bg: 'gray' } },
+  })
+  // Mouse wheel scrolls the log wherever the pointer is (the widget's own wheel
+  // handling only works while the pointer is over it and would double up with this).
+  const WHEEL_LINES = 3
+  screen.program.on('mouse', (data) => {
+    if (data.action !== 'wheelup' && data.action !== 'wheeldown') return
+    log.scroll(data.action === 'wheelup' ? -WHEEL_LINES : WHEEL_LINES)
+    screen.render()
   })
   // Prompt in the style of Claude Code: a "> " line between two gray horizontal rules.
   const box = blessed.box({ parent: screen, bottom: 0, left: 0, right: 0, height: 3 })
@@ -83,6 +92,11 @@ export function createUi() {
       if (key.name === 'tab') return complete()
       // Enter on a partial command completes it; on a full command name it sends.
       if (key.name === 'enter' && suggestions[menu.selected].name !== this.value.slice(1).toLowerCase()) return complete()
+    }
+    // With no menu open, Up/Down scroll the log a line at a time (the prompt is one line).
+    if (key && (key.name === 'up' || key.name === 'down') && !key.ctrl && !key.meta) {
+      log.scroll(key.name === 'up' ? -1 : 1)
+      return screen.render()
     }
     const result = baseListener.call(this, ch, key)
     updateMenu()
