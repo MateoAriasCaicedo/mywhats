@@ -1,5 +1,5 @@
 {
-  "name": "mywhats",
+  "name": "whats",
   "version": "1.0.0",
   "description": "Chat on WhatsApp from the terminal",
   "main": "index.js",
@@ -19,7 +19,7 @@
     "qrcode-terminal": "^0.12.0"
   },
   "bin": {
-    "mywhats": "index.js"
+    "whats": "index.js"
   },
   "engines": {
     "node": ">=20"

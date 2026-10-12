@@ -1,4 +1,4 @@
-# mywhats
+# whats
 
 Chat on WhatsApp from the terminal. It links to your account as a "linked device" (like WhatsApp Web), using [Baileys](https://github.com/WhiskeySockets/Baileys) for the connection and [blessed](https://github.com/chjj/blessed) for the interface.
 
@@ -13,14 +13,14 @@ Chat on WhatsApp from the terminal. It links to your account as a "linked device
 
 ```
 npm install
-npm link        # makes the `mywhats` command available everywhere
+npm link        # makes the `whats` command available everywhere
 ```
 
 ## Run
 
 ```
-mywhats         # or: npm start
-mywhats --demo  # fake chats, no account and no QR code (nothing is saved)
+whats         # or: npm start
+whats --demo  # fake chats, no account and no QR code (nothing is saved)
 ```
 
 The first time, scan the QR code with WhatsApp > Linked devices. The login is kept in `auth/`, so you only scan once. Message history is kept in `data/store.json`.
