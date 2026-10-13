@@ -93,18 +93,25 @@ export function writeStore(store, file) {
  */
 export function createSaver(store, file, delayMs = 500) {
   let timer
+  let stopped = false
   const flush = () => {
     clearTimeout(timer)
     timer = undefined
-    if (file) writeStore(store, file)
+    if (file && !stopped) writeStore(store, file)
   }
   const save = () => {
-    if (!file) return
+    if (!file || stopped) return
     clearTimeout(timer)
     timer = setTimeout(flush, delayMs)
     timer.unref?.()
   }
-  return { save, flush }
+  /** Permanently disables saving, e.g. after the file was deleted on purpose (logout). */
+  const stop = () => {
+    stopped = true
+    clearTimeout(timer)
+    timer = undefined
+  }
+  return { save, flush, stop }
 }
 
 /**

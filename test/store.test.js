@@ -265,3 +265,13 @@ test('removeChat forgets the chat and its messages', async () => {
   removeChat(store, 'a')
   assert.deepEqual([store.chats.a, store.messages.a], [undefined, undefined])
 })
+
+test('createSaver stop prevents any later write', (t) => {
+  const file = path.join(tempDir(t), 'store.json')
+  const saver = createSaver(emptyStore(), file, 20)
+  saver.save()
+  saver.stop()
+  saver.save()
+  saver.flush()
+  assert.equal(fs.existsSync(file), false)
+})

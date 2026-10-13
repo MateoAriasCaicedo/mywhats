@@ -13,6 +13,7 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   downloadMediaMessage,
+  BufferJSON,
 } from '@whiskeysockets/baileys'
 import pino from 'pino'
 import qrcode from 'qrcode-terminal'
@@ -130,7 +131,14 @@ screen.on('resize', () => {
   if (current) renderChat()
 })
 
-/** Re-sorts the chats and refreshes the unread count in the header. Opens the first chat if none is open. */
+/** renderList for WhatsApp events: bursts (contacts, history) are coalesced so typing isn't starved by redraws. */
+let listRefresh
+function scheduleRenderList() {
+  if (listRefresh) return
+  listRefresh = setTimeout(() => { listRefresh = undefined; renderList() }, 50)
+}
+
+/** Re-sorts the chats and refreshes the unread count in the header. */
 function renderList() {
   order = orderedChats(store)
   unreadChats = order.filter((jid) => store.chats[jid].unread).length
@@ -175,17 +183,23 @@ function closeChatPage() {
   renderHeader()
 }
 
-function appendMessage(m) {
+/** Formats a message into log lines, updating the spacing state for the next one. */
+function messageLines(m) {
   const { lines, state } = formatMessage(m, lastMessage, Date.now())
   lastMessage = state
-  for (const line of lines) log.log(line)
+  return lines
+}
+
+function appendMessage(m) {
+  for (const line of messageLines(m)) log.log(line)
 }
 
 function renderChat() {
   log.setContent('')
   lastMessage = null
   title = chatPage.isOpen ? pageTitle() : current ? nameOf(current) : ''
-  if (current) for (const m of store.messages[current] || []) appendMessage(m)
+  // One setContent for the whole history: log.log() re-wraps the entire log on every line (quadratic).
+  if (current) log.setContent((store.messages[current] || []).flatMap(messageLines).join('\n'))
   log.setScrollPerc(100)
   renderHeader()
 }
@@ -423,6 +437,28 @@ function quit() {
   process.exit(0)
 }
 
+/** Deletes everything this computer kept for the account: login, saved chats and downloaded media. */
+function wipeLocalData() {
+  saver.stop()
+  for (const target of [AUTH_DIR, DOWNLOADS_DIR, STORE_FILE, `${STORE_FILE}.tmp`, `${STORE_FILE}.corrupt`]) {
+    try { fs.rmSync(target, { recursive: true, force: true }) } catch {}
+  }
+}
+
+/** Unlinks this device from WhatsApp, then deletes the saved login, chats and downloads and exits. */
+async function logout() {
+  if (DEMO) return status('Nothing to log out of in demo mode.')
+  if (rec) return status('Finish the voice note first.')
+  try {
+    await withActivity('Logging out…', () => sock.logout())
+  } catch (e) {
+    // Offline or already unlinked: still remove everything local so nothing stays readable.
+    status(`Couldn't tell WhatsApp (${e.message}); removing local data anyway.`)
+  }
+  wipeLocalData()
+  quit()
+}
+
 /** Command name -> handler(argument). Must cover every entry of COMMANDS. */
 const handlers = {
   chats: showChats,
@@ -435,6 +471,7 @@ const handlers = {
   view: viewImage,
   play: playVoice,
   voice: startVoice,
+  logout,
   help: showHelp,
   quit,
 }
@@ -533,22 +570,32 @@ function onUpsert({ messages, type }) {
     }
     if (added && type === 'notify' && !m.key.fromMe) lastIncoming = jid
   }
-  renderList()
+  scheduleRenderList()
   saver.save()
 }
 
+/** Baileys' own saveCreds truncates creds.json before rewriting it, so quitting mid-save left an empty file (and a QR on the next start). Sync write + rename can't be cut in half. */
+function saveCredsAtomically(creds) {
+  const file = path.join(AUTH_DIR, 'creds.json')
+  const tmp = `${file}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(creds, BufferJSON.replacer, 2))
+  fs.renameSync(tmp, file)
+}
+
 async function connect() {
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
+  const { state } = await useMultiFileAuthState(AUTH_DIR)
   const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }))
   sock = makeWASocket({
     auth: state, version, logger: pino({ level: 'silent' }),
     syncFullHistory: false, markOnlineOnConnect: false,
   })
 
-  sock.ev.on('creds.update', saveCreds)
+  sock.ev.on('creds.update', () => saveCredsAtomically(state.creds))
 
   sock.ev.on('connection.update', ({ connection: next, lastDisconnect, qr }) => {
     if (qr) {
+      // With no chats yet the (empty) chat page is showing and covers the log the QR is drawn in.
+      closeChatPage()
       title = 'Scan with WhatsApp > Linked devices'
       renderHeader()
       qrcode.generate(qr, { small: true }, (code) => {
@@ -566,7 +613,8 @@ async function connect() {
       renderHeader()
     }
     if (next === 'open') {
-      renderChat()
+      if (!current) showChatPage('') // leave the QR behind
+      else renderChat()
       status('Connected.')
       syncContactNames().catch((e) => status(`Couldn't sync contact names: ${e.message}`))
     }
@@ -575,7 +623,9 @@ async function connect() {
       if (code === DisconnectReason.loggedOut) {
         connection = 'loggedOut'
         renderHeader()
-        status('Logged out. Delete the "auth" folder and restart to link again.')
+        // Unlinked from the phone: same as /logout, nobody should keep reading this account's chats.
+        wipeLocalData()
+        status('Logged out from the phone; saved login and chats were deleted. Restart to link again.')
       } else {
         status('Connection lost, reconnecting...')
         setTimeout(() => connect().catch((e) => status(`Reconnect failed: ${e.message}`)), 2000)
@@ -583,9 +633,9 @@ async function connect() {
     }
   })
 
-  sock.ev.on('lid-mapping.update', ({ lid, pn }) => { setLidMapping(store, lid, pn); renderList(); saver.save() })
+  sock.ev.on('lid-mapping.update', ({ lid, pn }) => { setLidMapping(store, lid, pn); scheduleRenderList(); saver.save() })
 
-  const update = (apply) => (items) => { apply(store, items); renderList(); saver.save() }
+  const update = (apply) => (items) => { apply(store, items); scheduleRenderList(); saver.save() }
   sock.ev.on('contacts.upsert', update(ingestContacts))
   sock.ev.on('contacts.update', update(ingestContacts))
   sock.ev.on('chats.upsert', update(upsertChats))

@@ -17,6 +17,7 @@ export const COMMANDS = Object.freeze([
   { name: 'view', usage: '/view [n]', description: 'open the latest image in this chat (n = nth latest)' },
   { name: 'play', usage: '/play [n]', description: 'listen to the latest voice note in this chat (n = nth latest)' },
   { name: 'voice', usage: '/voice', description: 'record a voice note (Enter sends, Esc cancels)' },
+  { name: 'logout', usage: '/logout', description: 'unlink this computer from WhatsApp, delete saved chats and exit' },
   { name: 'help', usage: '/help', description: 'show this help' },
   { name: 'quit', usage: '/quit', description: 'exit' },
 ])
