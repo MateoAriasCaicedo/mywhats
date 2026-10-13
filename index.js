@@ -20,6 +20,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { checkAuthDir } from './src/auth.js'
 import { COMMANDS, isBackWord, isExitWord, parseCommand, resolveChat, searchContacts } from './src/commands.js'
 import { createDemoSocket, seedDemoStore } from './src/demo.js'
 import { COLORS, colored, esc, formatMessage, headerContent } from './src/format.js'
@@ -622,5 +623,7 @@ focusInput()
 if (DEMO) startDemo()
 else {
   showStartScreen()
+  const auth = checkAuthDir(AUTH_DIR)
+  if (!auth.ok) status(`Saved login was corrupt; moved to ${path.basename(auth.backup)}. Scan the QR code to link again.`)
   connect().catch((e) => status(`Fatal: ${e.message}`))
 }
